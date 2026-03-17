@@ -1,0 +1,563 @@
+# Changelog
+
+Docs: https://docs.openclaw.ai
+
+## 2026.2.6
+
+### Changes
+
+- Cron: default `wakeMode` is now `"now"` for new jobs (was `"next-heartbeat"`). (#10776) Thanks @tyler6204.
+- Cron: `cron run` defaults to force execution; use `--due` to restrict to due-only. (#10776) Thanks @tyler6204.
+- Models: support Anthropic Opus 4.6 and OpenAI Codex gpt-5.3-codex (forward-compat fallbacks). (#9853, #10720, #9995) Thanks @TinyTb, @calvin-hpnet, @tyler6204.
+- Providers: add xAI (Grok) support. (#9885) Thanks @grp06.
+- Providers: add Baidu Qianfan support. (#8868) Thanks @ide-rea.
+- Web UI: add token usage dashboard. (#10072) Thanks @Takhoffman.
+- Memory: native Voyage AI support. (#7078) Thanks @mcinteerj.
+- Sessions: cap sessions_history payloads to reduce context overflow. (#10000) Thanks @gut-puncture.
+- CLI: sort commands alphabetically in help output. (#8068) Thanks @deepsoumya617.
+- CI: optimize pipeline throughput (macOS consolidation, Windows perf, workflow concurrency). (#10784) Thanks @mcaxtr.
+- Agents: bump pi-mono to 0.52.7; add embedded forward-compat fallback for Opus 4.6 model ids.
+
+### Added
+
+- Cron: run history deep-links to session chat from the dashboard. (#10776) Thanks @tyler6204.
+- Cron: per-run session keys in run log entries and default labels for cron sessions. (#10776) Thanks @tyler6204.
+- Cron: legacy payload field compatibility (`deliver`, `channel`, `to`, `bestEffortDeliver`) in schema. (#10776) Thanks @tyler6204.
+
+### Fixes
+
+- Cron: scheduler reliability (timer drift, restart catch-up, lock contention, stale running markers). (#10776) Thanks @tyler6204.
+- Cron: store migration hardening (legacy field migration, parse error handling, explicit delivery mode persistence). (#10776) Thanks @tyler6204.
+- Memory: set Voyage embeddings `input_type` for improved retrieval. (#10818) Thanks @mcinteerj.
+- Telegram: auto-inject DM topic threadId in message tool + subagent announce. (#7235) Thanks @Lukavyi.
+- Security: require auth for Gateway canvas host and A2UI assets. (#9518) Thanks @coygeek.
+- Cron: fix scheduling and reminder delivery regressions; harden next-run recompute + timer re-arming + legacy schedule fields. (#9733, #9823, #9948, #9932) Thanks @tyler6204, @pycckuu, @j2h4u, @fujiwara-tofu-shop.
+- Update: harden Control UI asset handling in update flow. (#10146) Thanks @gumadeiras.
+- Security: add skill/plugin code safety scanner; redact credentials from config.get gateway responses. (#9806, #9858) Thanks @abdelsfane.
+- Exec approvals: coerce bare string allowlist entries to objects. (#9903) Thanks @mcaxtr.
+- Slack: add mention stripPatterns for /new and /reset. (#9971) Thanks @ironbyte-rgb.
+- Chrome extension: fix bundled path resolution. (#8914) Thanks @kelvinCB.
+- Compaction/errors: allow multiple compaction retries on context overflow; show clear billing errors. (#8928, #8391) Thanks @Glucksberg.
+
+## 2026.2.3
+
+### Changes
+
+- Telegram: remove last `@ts-nocheck` from `bot-handlers.ts`, use Grammy types directly, deduplicate `StickerMetadata`. Zero `@ts-nocheck` remaining in `src/telegram/`. (#9206)
+- Telegram: remove `@ts-nocheck` from `bot-message.ts`, type deps via `Omit<BuildTelegramMessageContextParams>`, widen `allMedia` to `TelegramMediaRef[]`. (#9180)
+- Telegram: remove `@ts-nocheck` from `bot.ts`, fix duplicate `bot.catch` error handler (Grammy overrides), remove dead reaction `message_thread_id` routing, harden sticker cache guard. (#9077)
+- Onboarding: add Cloudflare AI Gateway provider setup and docs. (#7914) Thanks @roerohan.
+- Onboarding: add Moonshot (.cn) auth choice and keep the China base URL when preserving defaults. (#7180) Thanks @waynelwz.
+- Docs: clarify tmux send-keys for TUI by splitting text and Enter. (#7737) Thanks @Wangnov.
+- Docs: mirror the landing page revamp for zh-CN (features, quickstart, docs directory, network model, credits). (#8994) Thanks @joshp123.
+- Messages: add per-channel and per-account responsePrefix overrides across channels. (#9001) Thanks @mudrii.
+- Cron: add announce delivery mode for isolated jobs (CLI + Control UI) and delivery mode config.
+- Cron: default isolated jobs to announce delivery; accept ISO 8601 `schedule.at` in tool inputs.
+- Cron: hard-migrate isolated jobs to announce/none delivery; drop legacy post-to-main/payload delivery fields and `atMs` inputs.
+- Cron: delete one-shot jobs after success by default; add `--keep-after-run` for CLI.
+- Cron: suppress messaging tools during announce delivery so summaries post consistently.
+- Cron: avoid duplicate deliveries when isolated runs send messages directly.
+
+### Fixes
+
+- Heartbeat: allow explicit accountId routing for multi-account channels. (#8702) Thanks @lsh411.
+- TUI/Gateway: handle non-streaming finals, refresh history for non-local chat runs, and avoid event gap warnings for targeted tool streams. (#8432) Thanks @gumadeiras.
+- Shell completion: auto-detect and migrate slow dynamic patterns to cached files for faster terminal startup; add completion health checks to doctor/update/onboard.
+- Telegram: honor session model overrides in inline model selection. (#8193) Thanks @gildo.
+- Web UI: fix agent model selection saves for default/non-default agents and wrap long workspace paths. Thanks @Takhoffman.
+- Web UI: resolve header logo path when `gateway.controlUi.basePath` is set. (#7178) Thanks @Yeom-JinHo.
+- Web UI: apply button styling to the new-messages indicator.
+- Onboarding: infer auth choice from non-interactive API key flags. (#8484) Thanks @f-trycua.
+- Security: keep untrusted channel metadata out of system prompts (Slack/Discord). Thanks @KonstantinMirin.
+- Security: enforce sandboxed media paths for message tool attachments. (#9182) Thanks @victormier.
+- Security: require explicit credentials for gateway URL overrides to prevent credential leakage. (#8113) Thanks @victormier.
+- Security: gate `whatsapp_login` tool to owner senders and default-deny non-owner contexts. (#8768) Thanks @victormier.
+- Voice call: harden webhook verification with host allowlists/proxy trust and keep ngrok loopback bypass.
+- Voice call: add regression coverage for anonymous inbound caller IDs with allowlist policy. (#8104) Thanks @victormier.
+- Cron: accept epoch timestamps and 0ms durations in CLI `--at` parsing.
+- Cron: reload store data when the store file is recreated or mtime changes.
+- Cron: deliver announce runs directly, honor delivery mode, and respect wakeMode for summaries. (#8540) Thanks @tyler6204.
+- Telegram: include forward_from_chat metadata in forwarded messages and harden cron delivery target checks. (#8392) Thanks @Glucksberg.
+- macOS: fix cron payload summary rendering and ISO 8601 formatter concurrency safety.
+
+## 2026.2.2-3
+
+### Fixes
+
+- Update: ship legacy daemon-cli shim for pre-tsdown update imports (fixes daemon restart after npm update).
+
+## 2026.2.2-2
+
+### Changes
+
+- Docs: promote BlueBubbles as the recommended iMessage integration; mark imsg channel as legacy. (#8415) Thanks @tyler6204.
+
+### Fixes
+
+- CLI status: resolve build-info from bundled dist output (fixes "unknown" commit in npm builds).
+
+## 2026.2.2-1
+
+### Fixes
+
+- CLI status: fall back to build-info for version detection (fixes "unknown" in beta builds). Thanks @gumadeira.
+
+## 2026.2.2
+
+### Changes
+
+- Feishu: add Feishu/Lark plugin support + docs. (#7313) Thanks @jiulingyun (openclaw-cn).
+- Web UI: add Agents dashboard for managing agent files, tools, skills, models, channels, and cron jobs.
+- Subagents: discourage direct messaging tool use unless a specific external recipient is requested.
+- Memory: implement the opt-in QMD backend for workspace memory. (#3160) Thanks @vignesh07.
+- Security: add healthcheck skill and bootstrap audit guidance. (#7641) Thanks @Takhoffman.
+- Config: allow setting a default subagent thinking level via `agents.defaults.subagents.thinking` (and per-agent `agents.list[].subagents.thinking`). (#7372) Thanks @tyler6204.
+- Docs: zh-CN translations seed + polish, pipeline guidance, nav/landing updates, and typo fixes. (#8202, #6995, #6619, #7242, #7303, #7415) Thanks @AaronWander, @taiyi747, @Explorer1092, @rendaoyuan, @joshp123, @lailoo.
+- Docs: add zh-CN i18n guardrails to avoid editing generated translations. (#8416) Thanks @joshp123.
+
+### Fixes
+
+- Docs: finish renaming the QMD memory docs to reference the OpenClaw state dir.
+- Onboarding: keep TUI flow exclusive (skip completion prompt + background Web UI seed).
+- Onboarding: drop completion prompt now handled by install/update.
+- TUI: block onboarding output while TUI is active and restore terminal state on exit.
+- CLI: cache shell completion scripts in state dir and source cached files in profiles.
+- Zsh completion: escape option descriptions to avoid invalid option errors.
+- Agents: repair malformed tool calls and session transcripts. (#7473) Thanks @justinhuangcode.
+- fix(agents): validate AbortSignal instances before calling AbortSignal.any() (#7277) (thanks @Elarwei001)
+- fix(webchat): respect user scroll position during streaming and refresh (#7226) (thanks @marcomarandiz)
+- Telegram: recover from grammY long-poll timed out errors. (#7466) Thanks @macmimi23.
+- Media understanding: skip binary media from file text extraction. (#7475) Thanks @AlexZhangji.
+- Security: enforce access-group gating for Slack slash commands when channel type lookup fails.
+- Security: require validated shared-secret auth before skipping device identity on gateway connect.
+- Security: guard skill installer downloads with SSRF checks (block private/localhost URLs).
+- Security: harden Windows exec allowlist; block cmd.exe bypass via single &. Thanks @simecek.
+- fix(voice-call): harden inbound allowlist; reject anonymous callers; require Telnyx publicKey for allowlist; token-gate Twilio media streams; cap webhook body size (thanks @simecek)
+- Media understanding: apply SSRF guardrails to provider fetches; allow private baseUrl overrides explicitly.
+- fix(webchat): respect user scroll position during streaming and refresh (#7226) (thanks @marcomarandiz)
+- Telegram: recover from grammY long-poll timed out errors. (#7466) Thanks @macmimi23.
+- Agents: repair malformed tool calls and session transcripts. (#7473) Thanks @justinhuangcode.
+- fix(agents): validate AbortSignal instances before calling AbortSignal.any() (#7277) (thanks @Elarwei001)
+- Media understanding: skip binary media from file text extraction. (#7475) Thanks @AlexZhangji.
+- Onboarding: keep TUI flow exclusive (skip completion prompt + background Web UI seed); completion prompt now handled by install/update.
+- TUI: block onboarding output while TUI is active and restore terminal state on exit.
+- CLI/Zsh completion: cache scripts in state dir and escape option descriptions to avoid invalid option errors.
+- fix(ui): resolve Control UI asset path correctly.
+- fix(ui): refresh agent files after external edits.
+- Docs: finish renaming the QMD memory docs to reference the OpenClaw state dir.
+- Tests: stub SSRF DNS pinning in web auto-reply + Gemini video coverage. (#6619) Thanks @joshp123.
+
+## 2026.2.1
+
+### Changes
+
+- Docs: onboarding/install/i18n/exec-approvals/Control UI/exe.dev/cacheRetention updates + misc nav/typos. (#3050, #3461, #4064, #4675, #4729, #4763, #5003, #5402, #5446, #5474, #5663, #5689, #5694, #5967, #6270, #6300, #6311, #6416, #6487, #6550, #6789)
+- Telegram: use shared pairing store. (#6127) Thanks @obviyus.
+- Agents: add OpenRouter app attribution headers. Thanks @alexanderatallah.
+- Agents: add system prompt safety guardrails. (#5445) Thanks @joshp123.
+- Agents: update pi-ai to 0.50.9 and rename cacheControlTtl -> cacheRetention (with back-compat mapping).
+- Agents: extend CreateAgentSessionOptions with systemPrompt/skills/contextFiles.
+- Agents: add tool policy conformance snapshot (no runtime behavior change). (#6011)
+- Auth: update MiniMax OAuth hint + portal auth note copy.
+- Discord: inherit thread parent bindings for routing. (#3892) Thanks @aerolalit.
+- Gateway: inject timestamps into agent and chat.send messages. (#3705) Thanks @conroywhitney, @CashWilliams.
+- Gateway: require TLS 1.3 minimum for TLS listeners. (#5970) Thanks @loganaden.
+- Web UI: refine chat layout + extend session active duration.
+- CI: add formal conformance + alias consistency checks. (#5723, #5807)
+
+### Fixes
+
+- Security: guard remote media fetches with SSRF protections (block private/localhost, DNS pinning).
+- Updates: clean stale global install rename dirs and extend gateway update timeouts to avoid npm ENOTEMPTY failures.
+- Plugins: validate plugin/hook install paths and reject traversal-like names.
+- Telegram: add download timeouts for file fetches. (#6914) Thanks @hclsys.
+- Telegram: enforce thread specs for DM vs forum sends. (#6833) Thanks @obviyus.
+- Streaming: flush block streaming on paragraph boundaries for newline chunking. (#7014)
+- Streaming: stabilize partial streaming filters.
+- Auto-reply: avoid referencing workspace files in /new greeting prompt. (#5706) Thanks @bravostation.
+- Tools: align tool execute adapters/signatures (legacy + parameter order + arg normalization).
+- Tools: treat "\*" tool allowlist entries as valid to avoid spurious unknown-entry warnings.
+- Skills: update session-logs paths from .clawdbot to .openclaw. (#4502)
+- Slack: harden media fetch limits and Slack file URL validation. (#6639) Thanks @davidiach.
+- Lint: satisfy curly rule after import sorting. (#6310)
+- Process: resolve Windows `spawn()` failures for npm-family CLIs by appending `.cmd` when needed. (#5815) Thanks @thejhinvirtuoso.
+- Discord: resolve PluralKit proxied senders for allowlists and labels. (#5838) Thanks @thewilloftheshadow.
+- Tlon: add timeout to SSE client fetch calls (CWE-400). (#5926)
+- Memory search: L2-normalize local embedding vectors to fix semantic search. (#5332)
+- Agents: align embedded runner + typings with pi-coding-agent API updates (pi 0.51.0).
+- Agents: ensure OpenRouter attribution headers apply in the embedded runner.
+- Agents: cap context window resolution for compaction safeguard. (#6187) Thanks @iamEvanYT.
+- System prompt: resolve overrides and hint using session_status for current date/time. (#1897, #1928, #2108, #3677)
+- Agents: fix Pi prompt template argument syntax. (#6543)
+- Subagents: fix announce failover race (always emit lifecycle end; timeout=0 means no-timeout). (#6621)
+- Teams: gate media auth retries.
+- Telegram: restore draft streaming partials. (#5543) Thanks @obviyus.
+- Onboarding: friendlier Windows onboarding message. (#6242) Thanks @shanselman.
+- TUI: prevent crash when searching with digits in the model selector.
+- Agents: wire before_tool_call plugin hook into tool execution. (#6570, #6660) Thanks @ryancnelson.
+- Browser: secure Chrome extension relay CDP sessions.
+- Docker: use container port for gateway command instead of host port. (#5110) Thanks @mise42.
+- Docker: start gateway CMD by default for container deployments. (#6635) Thanks @kaizen403.
+- fix(lobster): block arbitrary exec via lobsterPath/cwd injection (GHSA-4mhr-g7xj-cg8j). (#5335) Thanks @vignesh07.
+- Security: sanitize WhatsApp accountId to prevent path traversal. (#4610)
+- Security: restrict MEDIA path extraction to prevent LFI. (#4930)
+- Security: validate message-tool filePath/path against sandbox root. (#6398)
+- Security: block LD*/DYLD* env overrides for host exec. (#4896) Thanks @HassanFleyah.
+- Security: harden web tool content wrapping + file parsing safeguards. (#4058) Thanks @VACInc.
+- Security: enforce Twitch `allowFrom` allowlist gating (deny non-allowlisted senders). Thanks @MegaManSec.
+
+## 2026.1.31
+
+### Changes
+
+- Docs: onboarding/install/i18n/exec-approvals/Control UI/exe.dev/cacheRetention updates + misc nav/typos. (#3050, #3461, #4064, #4675, #4729, #4763, #5003, #5402, #5446, #5474, #5663, #5689, #5694, #5967, #6270, #6300, #6311, #6416, #6487, #6550, #6789)
+- Telegram: use shared pairing store. (#6127) Thanks @obviyus.
+- Agents: add OpenRouter app attribution headers. Thanks @alexanderatallah.
+- Agents: add system prompt safety guardrails. (#5445) Thanks @joshp123.
+- Agents: update pi-ai to 0.50.9 and rename cacheControlTtl -> cacheRetention (with back-compat mapping).
+- Agents: extend CreateAgentSessionOptions with systemPrompt/skills/contextFiles.
+- Agents: add tool policy conformance snapshot (no runtime behavior change). (#6011)
+- Auth: update MiniMax OAuth hint + portal auth note copy.
+- Discord: inherit thread parent bindings for routing. (#3892) Thanks @aerolalit.
+- Gateway: inject timestamps into agent and chat.send messages. (#3705) Thanks @conroywhitney, @CashWilliams.
+- Gateway: require TLS 1.3 minimum for TLS listeners. (#5970) Thanks @loganaden.
+- Web UI: refine chat layout + extend session active duration.
+- CI: add formal conformance + alias consistency checks. (#5723, #5807)
+
+### Fixes
+
+- Security: guard remote media fetches with SSRF protections (block private/localhost, DNS pinning).
+- Updates: clean stale global install rename dirs and extend gateway update timeouts to avoid npm ENOTEMPTY failures.
+- Plugins: validate plugin/hook install paths and reject traversal-like names.
+- Telegram: add download timeouts for file fetches. (#6914) Thanks @hclsys.
+- Telegram: enforce thread specs for DM vs forum sends. (#6833) Thanks @obviyus.
+- Streaming: flush block streaming on paragraph boundaries for newline chunking. (#7014)
+- Streaming: stabilize partial streaming filters.
+- Auto-reply: avoid referencing workspace files in /new greeting prompt. (#5706) Thanks @bravostation.
+- Tools: align tool execute adapters/signatures (legacy + parameter order + arg normalization).
+- Tools: treat `"*"` tool allowlist entries as valid to avoid spurious unknown-entry warnings.
+- Skills: update session-logs paths from .clawdbot to .openclaw. (#4502)
+- Slack: harden media fetch limits and Slack file URL validation. (#6639) Thanks @davidiach.
+- Lint: satisfy curly rule after import sorting. (#6310)
+- Process: resolve Windows `spawn()` failures for npm-family CLIs by appending `.cmd` when needed. (#5815) Thanks @thejhinvirtuoso.
+- Discord: resolve PluralKit proxied senders for allowlists and labels. (#5838) Thanks @thewilloftheshadow.
+- Tlon: add timeout to SSE client fetch calls (CWE-400). (#5926)
+- Memory search: L2-normalize local embedding vectors to fix semantic search. (#5332)
+- Agents: align embedded runner + typings with pi-coding-agent API updates (pi 0.51.0).
+- Agents: ensure OpenRouter attribution headers apply in the embedded runner.
+- Agents: cap context window resolution for compaction safeguard. (#6187) Thanks @iamEvanYT.
+- System prompt: resolve overrides and hint using session_status for current date/time. (#1897, #1928, #2108, #3677)
+- Agents: fix Pi prompt template argument syntax. (#6543)
+- Subagents: fix announce failover race (always emit lifecycle end; timeout=0 means no-timeout). (#6621)
+- Teams: gate media auth retries.
+- Telegram: restore draft streaming partials. (#5543) Thanks @obviyus.
+- Onboarding: friendlier Windows onboarding message. (#6242) Thanks @shanselman.
+- TUI: prevent crash when searching with digits in the model selector.
+- Agents: wire before_tool_call plugin hook into tool execution. (#6570, #6660) Thanks @ryancnelson.
+- Browser: secure Chrome extension relay CDP sessions.
+- Docker: use container port for gateway command instead of host port. (#5110) Thanks @mise42.
+- Docker: start gateway CMD by default for container deployments. (#6635) Thanks @kaizen403.
+- fix(lobster): block arbitrary exec via lobsterPath/cwd injection (GHSA-4mhr-g7xj-cg8j). (#5335) Thanks @vignesh07.
+- Security: sanitize WhatsApp accountId to prevent path traversal. (#4610)
+- Security: restrict MEDIA path extraction to prevent LFI. (#4930)
+- Security: validate message-tool filePath/path against sandbox root. (#6398)
+- Security: block LD*/DYLD* env overrides for host exec. (#4896) Thanks @HassanFleyah.
+- Security: harden web tool content wrapping + file parsing safeguards. (#4058) Thanks @VACInc.
+- Security: enforce Twitch `allowFrom` allowlist gating (deny non-allowlisted senders). Thanks @MegaManSec.
+
+## 2026.1.30
+
+### Changes
+
+- CLI: add `completion` command (Zsh/Bash/PowerShell/Fish) and auto-setup during postinstall/onboarding.
+- CLI: add per-agent `models status` (`--agent` filter). (#4780) Thanks @jlowin.
+- Agents: add Kimi K2.5 to the synthetic model catalog. (#4407) Thanks @manikv12.
+- Auth: switch Kimi Coding to built-in provider; normalize OAuth profile email.
+- Auth: add MiniMax OAuth plugin + onboarding option. (#4521) Thanks @Maosghoul.
+- Agents: update pi SDK/API usage and dependencies.
+- Web UI: refresh sessions after chat commands and improve session display names.
+- Build: move TypeScript builds to `tsdown` + `tsgo` (faster builds, CI typechecks), update tsconfig target, and clean up lint rules.
+- Build: align npm tar override and bin metadata so the `openclaw` CLI entrypoint is preserved in npm publishes.
+- Docs: add pi/pi-dev docs and update OpenClaw branding + install links.
+- Docker E2E: stabilize gateway readiness, plugin installs/manifests, and cleanup/doctor switch entrypoint checks.
+
+### Fixes
+
+- Security: restrict local path extraction in media parser to prevent LFI. (#4880)
+- Gateway: prevent token defaults from becoming the literal "undefined". (#4873) Thanks @Hisleren.
+- Control UI: fix assets resolution for npm global installs. (#4909) Thanks @YuriNachos.
+- macOS: avoid stderr pipe backpressure in gateway discovery. (#3304) Thanks @abhijeet117.
+- Telegram: normalize account token lookup for non-normalized IDs. (#5055) Thanks @jasonsschin.
+- Telegram: preserve delivery thread fallback and fix threadId handling in delivery context.
+- Telegram: fix HTML nesting for overlapping styles/links. (#4578) Thanks @ThanhNguyxn.
+- Telegram: accept numeric messageId/chatId in react actions. (#4533) Thanks @Ayush10.
+- Telegram: honor per-account proxy dispatcher via undici fetch. (#4456) Thanks @spiceoogway.
+- Telegram: scope skill commands to bound agent per bot. (#4360) Thanks @robhparker.
+- BlueBubbles: debounce by messageId to preserve attachments in text+image messages. (#4984)
+- Routing: prefer requesterOrigin over stale session entries for sub-agent announce delivery. (#4957)
+- Extensions: restore embedded extension discovery typings.
+- CLI: fix `tui:dev` port resolution.
+- LINE: fix status command TypeError. (#4651)
+- OAuth: skip expired-token warnings when refresh tokens are still valid. (#4593)
+- Build: skip redundant UI install step in Dockerfile. (#4584) Thanks @obviyus.
+
+## 2026.1.29
+
+### Changes
+
+- Rebrand: rename the npm package/CLI to `openclaw`, add a `openclaw` compatibility shim, and move extensions to the `@openclaw/*` scope.
+- Onboarding: strengthen security warning copy for beta + access control expectations.
+- Onboarding: add Venice API key to non-interactive flow. (#1893) Thanks @jonisjongithub.
+- Config: auto-migrate legacy state/config paths and keep config resolution consistent across legacy filenames.
+- Gateway: warn on hook tokens via query params; document header auth preference. (#2200) Thanks @YuriNachos.
+- Gateway: add dangerous Control UI device auth bypass flag + audit warnings. (#2248)
+- Doctor: warn on gateway exposure without auth. (#2016) Thanks @Alex-Alaniz.
+- Web UI: keep sub-agent announce replies visible in WebChat. (#1977) Thanks @andrescardonas7.
+- Browser: route browser control via gateway/node; remove standalone browser control command and control URL config.
+- Browser: route `browser.request` via node proxies when available; honor proxy timeouts; derive browser ports from `gateway.port`.
+- Browser: fall back to URL matching for extension relay target resolution. (#1999) Thanks @jonit-dev.
+- Telegram: allow caption param for media sends. (#1888) Thanks @mguellsegarra.
+- Telegram: support plugin sendPayload channelData (media/buttons) and validate plugin commands. (#1917) Thanks @JoshuaLelon.
+- Telegram: avoid block replies when streaming is disabled. (#1885) Thanks @ivancasco.
+- Telegram: add optional silent send flag (disable notifications). (#2382) Thanks @Suksham-sharma.
+- Telegram: support editing sent messages via message(action="edit"). (#2394) Thanks @marcelomar21.
+- Telegram: support quote replies for message tool and inbound context. (#2900) Thanks @aduk059.
+- Telegram: add sticker receive/send with vision caching. (#2629) Thanks @longjos.
+- Telegram: send sticker pixels to vision models. (#2650)
+- Telegram: keep topic IDs in restart sentinel notifications. (#1807) Thanks @hsrvc.
+- Discord: add configurable privileged gateway intents for presences/members. (#2266) Thanks @kentaro.
+- Slack: clear ack reaction after streamed replies. (#2044) Thanks @fancyboi999.
+- Matrix: switch plugin SDK to @vector-im/matrix-bot-sdk.
+- Tlon: format thread reply IDs as @ud. (#1837) Thanks @wca4a.
+- Tools: add per-sender group tool policies and fix precedence. (#1757) Thanks @adam91holt.
+- Agents: summarize dropped messages during compaction safeguard pruning. (#2509) Thanks @jogi47.
+- Agents: expand cron tool description with full schema docs. (#1988) Thanks @tomascupr.
+- Agents: honor tools.exec.safeBins in exec allowlist checks. (#2281)
+- Memory Search: allow extra paths for memory indexing (ignores symlinks). (#3600) Thanks @kira-ariaki.
+- Skills: add multi-image input support to Nano Banana Pro skill. (#1958) Thanks @tyler6204.
+- Skills: add missing dependency metadata for GitHub, Notion, Slack, Discord. (#1995) Thanks @jackheuberger.
+- Commands: group /help and /commands output with Telegram paging. (#2504) Thanks @hougangdev.
+- Routing: add per-account DM session scope and document multi-account isolation. (#3095) Thanks @jarvis-sam.
+- Routing: precompile session key regexes. (#1697) Thanks @Ray0907.
+- CLI: use Node's module compile cache for faster startup. (#2808) Thanks @pi0.
+- Auth: show copyable Google auth URL after ASCII prompt. (#1787) Thanks @robbyczgw-cla.
+- TUI: avoid width overflow when rendering selection lists. (#1686) Thanks @mossein.
+- macOS: finish OpenClaw app rename for macOS sources, bundle identifiers, and shared kit paths. (#2844) Thanks @fal3.
+- Branding: update launchd labels, mobile bundle IDs, and logging subsystems to bot.molt (legacy bundle ID migrations). Thanks @thewilloftheshadow.
+- macOS: limit project-local `node_modules/.bin` PATH preference to debug builds (reduce PATH hijacking risk).
+- macOS: keep custom SSH usernames in remote target. (#2046) Thanks @algal.
+- macOS: avoid crash when rendering code blocks by bumping Textual to 0.3.1. (#2033) Thanks @garricn.
+- Update: ignore dist/control-ui for dirty checks and restore after ui builds. (#1976) Thanks @Glucksberg.
+- Build: bundle A2UI assets during build and stop tracking generated bundles. (#2455) Thanks @0oAstro.
+- CI: increase Node heap size for macOS checks. (#1890) Thanks @realZachi.
+- Config: apply config.env before ${VAR} substitution. (#1813) Thanks @spanishflu-est1918.
+- Gateway: prefer newest session metadata when combining stores. (#1823) Thanks @emanuelst.
+- Docs: tighten Fly private deployment steps. (#2289) Thanks @dguido.
+- Docs: add migration guide for moving to a new machine. (#2381)
+- Docs: add Northflank one-click deployment guide. (#2167) Thanks @AdeboyeDN.
+- Docs: add Vercel AI Gateway to providers sidebar. (#1901) Thanks @jerilynzheng.
+- Docs: add Render deployment guide. (#1975) Thanks @anurag.
+- Docs: add Claude Max API Proxy guide. (#1875) Thanks @atalovesyou.
+- Docs: add DigitalOcean deployment guide. (#1870) Thanks @0xJonHoldsCrypto.
+- Docs: add Oracle Cloud (OCI) platform guide + cross-links. (#2333) Thanks @hirefrank.
+- Docs: add Raspberry Pi install guide. (#1871) Thanks @0xJonHoldsCrypto.
+- Docs: add GCP Compute Engine deployment guide. (#1848) Thanks @hougangdev.
+- Docs: add LINE channel guide. Thanks @thewilloftheshadow.
+- Docs: credit both contributors for Control UI refresh. (#1852) Thanks @EnzeD.
+- Docs: keep docs header sticky so navbar stays visible while scrolling. (#2445) Thanks @chenyuan99.
+- Docs: update exe.dev install instructions. (#https://github.com/openclaw/openclaw/pull/3047) Thanks @zackerthescar.
+
+### Breaking
+
+- **BREAKING:** Gateway auth mode "none" is removed; gateway now requires token/password (Tailscale Serve identity still allowed).
+
+### Fixes
+
+- Skills: update session-logs paths to use ~/.openclaw. (#4502) Thanks @bonald.
+- Telegram: avoid silent empty replies by tracking normalization skips before fallback. (#3796)
+- Mentions: honor mentionPatterns even when explicit mentions are present. (#3303) Thanks @HirokiKobayashi-R.
+- Discord: restore username directory lookup in target resolution. (#3131) Thanks @bonald.
+- Agents: align MiniMax base URL test expectation with default provider config. (#3131) Thanks @bonald.
+- Agents: prevent retries on oversized image errors and surface size limits. (#2871) Thanks @Suksham-sharma.
+- Agents: inherit provider baseUrl/api for inline models. (#2740) Thanks @lploc94.
+- Memory Search: keep auto provider model defaults and only include remote when configured. (#2576) Thanks @papago2355.
+- Telegram: include AccountId in native command context for multi-agent routing. (#2942) Thanks @Chloe-VP.
+- Telegram: handle video note attachments in media extraction. (#2905) Thanks @mylukin.
+- TTS: read OPENAI_TTS_BASE_URL at runtime instead of module load to honor config.env. (#3341) Thanks @hclsys.
+- macOS: auto-scroll to bottom when sending a new message while scrolled up. (#2471) Thanks @kennyklee.
+- Web UI: auto-expand the chat compose textarea while typing (with sensible max height). (#2950) Thanks @shivamraut101.
+- Gateway: prevent crashes on transient network errors (fetch failures, timeouts, DNS). Added fatal error detection to only exit on truly critical errors. Fixes #2895, #2879, #2873. (#2980) Thanks @elliotsecops.
+- Agents: guard channel tool listActions to avoid plugin crashes. (#2859) Thanks @mbelinky.
+- Discord: stop resolveDiscordTarget from passing directory params into messaging target parsers. Fixes #3167. Thanks @thewilloftheshadow.
+- Discord: avoid resolving bare channel names to user DMs when a username matches. Thanks @thewilloftheshadow.
+- Discord: fix directory config type import for target resolution. Thanks @thewilloftheshadow.
+- Providers: update MiniMax API endpoint and compatibility mode. (#3064) Thanks @hlbbbbbbb.
+- Telegram: treat more network errors as recoverable in polling. (#3013) Thanks @ryancontent.
+- Discord: resolve usernames to user IDs for outbound messages. (#2649) Thanks @nonggialiang.
+- Providers: update Moonshot Kimi model references to kimi-k2.5. (#2762) Thanks @MarvinCui.
+- Gateway: suppress AbortError and transient network errors in unhandled rejections. (#2451) Thanks @Glucksberg.
+- TTS: keep /tts status replies on text-only commands and avoid duplicate block-stream audio. (#2451) Thanks @Glucksberg.
+- Security: pin npm overrides to keep tar@7.5.4 for install toolchains.
+- Security: properly test Windows ACL audit for config includes. (#2403) Thanks @dominicnunez.
+- CLI: recognize versioned Node executables when parsing argv. (#2490) Thanks @David-Marsh-Photo.
+- CLI: avoid prompting for gateway runtime under the spinner. (#2874)
+- BlueBubbles: coalesce inbound URL link preview messages. (#1981) Thanks @tyler6204.
+- Cron: allow payloads containing "heartbeat" in event filter. (#2219) Thanks @dwfinkelstein.
+- CLI: avoid loading config for global help/version while registering plugin commands. (#2212) Thanks @dial481.
+- Agents: include memory.md when bootstrapping memory context. (#2318) Thanks @czekaj.
+- Agents: release session locks on process termination and cover more signals. (#2483) Thanks @janeexai.
+- Agents: skip cooldowned providers during model failover. (#2143) Thanks @YiWang24.
+- Telegram: harden polling + retry behavior for transient network errors and Node 22 transport issues. (#2420) Thanks @techboss.
+- Telegram: ignore non-forum group message_thread_id while preserving DM thread sessions. (#2731) Thanks @dylanneve1.
+- Telegram: wrap reasoning italics per line to avoid raw underscores. (#2181) Thanks @YuriNachos.
+- Telegram: centralize API error logging for delivery and bot calls. (#2492) Thanks @altryne.
+- Voice Call: enforce Twilio webhook signature verification for ngrok URLs; disable ngrok free tier bypass by default.
+- Security: harden Tailscale Serve auth by validating identity via local tailscaled before trusting headers.
+- Media: fix text attachment MIME misclassification with CSV/TSV inference and UTF-16 detection; add XML attribute escaping for file output. (#3628) Thanks @frankekn.
+- Build: align memory-core peer dependency with lockfile.
+- Security: add mDNS discovery mode with minimal default to reduce information disclosure. (#1882) Thanks @orlyjamie.
+- Security: harden URL fetches with DNS pinning to reduce rebinding risk. Thanks Chris Zheng.
+- Web UI: improve WebChat image paste previews and allow image-only sends. (#1925) Thanks @smartprogrammer93.
+- Security: wrap external hook content by default with a per-hook opt-out. (#1827) Thanks @mertcicekci0.
+- Gateway: default auth now fail-closed (token/password required; Tailscale Serve identity remains allowed).
+- Gateway: treat loopback + non-local Host connections as remote unless trusted proxy headers are present.
+- Onboarding: remove unsupported gateway auth "off" choice from onboarding/configure flows and CLI flags.
+
+## 2026.1.24-3
+
+### Fixes
+
+- Slack: fix image downloads failing due to missing Authorization header on cross-origin redirects. (#1936) Thanks @sanderhelgesen.
+- Gateway: harden reverse proxy handling for local-client detection and unauthenticated proxied connects. (#1795) Thanks @orlyjamie.
+- Security audit: flag loopback Control UI with auth disabled as critical. (#1795) Thanks @orlyjamie.
+- CLI: resume claude-cli sessions and stream CLI replies to TUI clients. (#1921) Thanks @rmorse.
+
+## 2026.1.24-2
+
+### Fixes
+
+- Packaging: include dist/link-understanding output in npm tarball (fixes missing apply.js import on install).
+
+## 2026.1.24-1
+
+### Fixes
+
+- Packaging: include dist/shared output in npm tarball (fixes missing reasoning-tags import on install).
+
+## 2026.1.24
+
+### Highlights
+
+- Providers: Ollama discovery + docs; Venice guide upgrades + cross-links. (#1606) Thanks @abhaymundhara. https://docs.openclaw.ai/providers/ollama https://docs.openclaw.ai/providers/venice
+- Channels: LINE plugin (Messaging API) with rich replies + quick replies. (#1630) Thanks @plum-dawg.
+- TTS: Edge fallback (keyless) + `/tts` auto modes. (#1668, #1667) Thanks @steipete, @sebslight. https://docs.openclaw.ai/tts
+- Exec approvals: approve in-chat via `/approve` across all channels (including plugins). (#1621) Thanks @czekaj. https://docs.openclaw.ai/tools/exec-approvals https://docs.openclaw.ai/tools/slash-commands
+- Telegram: DM topics as separate sessions + outbound link preview toggle. (#1597, #1700) Thanks @rohannagpal, @zerone0x. https://docs.openclaw.ai/channels/telegram
+
+### Changes
+
+- Channels: add LINE plugin (Messaging API) with rich replies, quick replies, and plugin HTTP registry. (#1630) Thanks @plum-dawg.
+- TTS: add Edge TTS provider fallback, defaulting to keyless Edge with MP3 retry on format failures. (#1668) Thanks @steipete. https://docs.openclaw.ai/tts
+- TTS: add auto mode enum (off/always/inbound/tagged) with per-session `/tts` override. (#1667) Thanks @sebslight. https://docs.openclaw.ai/tts
+- Telegram: treat DM topics as separate sessions and keep DM history limits stable with thread suffixes. (#1597) Thanks @rohannagpal.
+- Telegram: add `channels.telegram.linkPreview` to toggle outbound link previews. (#1700) Thanks @zerone0x. https://docs.openclaw.ai/channels/telegram
+- Web search: add Brave freshness filter parameter for time-scoped results. (#1688) Thanks @JonUleis. https://docs.openclaw.ai/tools/web
+- UI: refresh Control UI dashboard design system (colors, icons, typography). (#1745, #1786) Thanks @EnzeD, @mousberg.
+- Exec approvals: forward approval prompts to chat with `/approve` for all channels (including plugins). (#1621) Thanks @czekaj. https://docs.openclaw.ai/tools/exec-approvals https://docs.openclaw.ai/tools/slash-commands
+- Gateway: expose config.patch in the gateway tool with safe partial updates + restart sentinel. (#1653) Thanks @Glucksberg.
+- Diagnostics: add diagnostic flags for targeted debug logs (config + env override). https://docs.openclaw.ai/diagnostics/flags
+- Docs: expand FAQ (migration, scheduling, concurrency, model recommendations, OpenAI subscription auth, Pi sizing, hackable install, docs SSL workaround).
+- Docs: add verbose installer troubleshooting guidance.
+- Docs: add macOS VM guide with local/hosted options + VPS/nodes guidance. (#1693) Thanks @f-trycua.
+- Docs: add Bedrock EC2 instance role setup + IAM steps. (#1625) Thanks @sergical. https://docs.openclaw.ai/bedrock
+- Docs: update Fly.io guide notes.
+- Dev: add prek pre-commit hooks + dependabot config for weekly updates. (#1720) Thanks @dguido.
+
+### Fixes
+
+- Web UI: fix config/debug layout overflow, scrolling, and code block sizing. (#1715) Thanks @saipreetham589.
+- Web UI: show Stop button during active runs, swap back to New session when idle. (#1664) Thanks @ndbroadbent.
+- Web UI: clear stale disconnect banners on reconnect; allow form saves with unsupported schema paths but block missing schema. (#1707) Thanks @Glucksberg.
+- Web UI: hide internal `message_id` hints in chat bubbles.
+- Gateway: allow Control UI token-only auth to skip device pairing even when device identity is present (`gateway.controlUi.allowInsecureAuth`). (#1679) Thanks @steipete.
+- Matrix: decrypt E2EE media attachments with preflight size guard. (#1744) Thanks @araa47.
+- BlueBubbles: route phone-number targets to DMs, avoid leaking routing IDs, and auto-create missing DMs (Private API required). (#1751) Thanks @tyler6204. https://docs.openclaw.ai/channels/bluebubbles
+- BlueBubbles: keep part-index GUIDs in reply tags when short IDs are missing.
+- iMessage: normalize chat_id/chat_guid/chat_identifier prefixes case-insensitively and keep service-prefixed handles stable. (#1708) Thanks @aaronn.
+- Signal: repair reaction sends (group/UUID targets + CLI author flags). (#1651) Thanks @vilkasdev.
+- Signal: add configurable signal-cli startup timeout + external daemon mode docs. (#1677) https://docs.openclaw.ai/channels/signal
+- Telegram: set fetch duplex="half" for uploads on Node 22 to avoid sendPhoto failures. (#1684) Thanks @commdata2338.
+- Telegram: use wrapped fetch for long-polling on Node to normalize AbortSignal handling. (#1639)
+- Telegram: honor per-account proxy for outbound API calls. (#1774) Thanks @radek-paclt.
+- Telegram: fall back to text when voice notes are blocked by privacy settings. (#1725) Thanks @foeken.
+- Voice Call: return stream TwiML for outbound conversation calls on initial Twilio webhook. (#1634)
+- Voice Call: serialize Twilio TTS playback and cancel on barge-in to prevent overlap. (#1713) Thanks @dguido.
+- Google Chat: tighten email allowlist matching, typing cleanup, media caps, and onboarding/docs/tests. (#1635) Thanks @iHildy.
+- Google Chat: normalize space targets without double `spaces/` prefix.
+- Agents: auto-compact on context overflow prompt errors before failing. (#1627) Thanks @rodrigouroz.
+- Agents: use the active auth profile for auto-compaction recovery.
+- Media understanding: skip image understanding when the primary model already supports vision. (#1747) Thanks @tyler6204.
+- Models: default missing custom provider fields so minimal configs are accepted.
+- Messaging: keep newline chunking safe for fenced markdown blocks across channels.
+- Messaging: treat newline chunking as paragraph-aware (blank-line splits) to keep lists and headings together. (#1726) Thanks @tyler6204.
+- TUI: reload history after gateway reconnect to restore session state. (#1663)
+- Heartbeat: normalize target identifiers for consistent routing.
+- Exec: keep approvals for elevated ask unless full mode. (#1616) Thanks @ivancasco.
+- Exec: treat Windows platform labels as Windows for node shell selection. (#1760) Thanks @ymat19.
+- Gateway: include inline config env vars in service install environments. (#1735) Thanks @Seredeep.
+- Gateway: skip Tailscale DNS probing when tailscale.mode is off. (#1671)
+- Gateway: reduce log noise for late invokes + remote node probes; debounce skills refresh. (#1607) Thanks @petter-b.
+- Gateway: clarify Control UI/WebChat auth error hints for missing tokens. (#1690)
+- Gateway: listen on IPv6 loopback when bound to 127.0.0.1 so localhost webhooks work.
+- Gateway: store lock files in the temp directory to avoid stale locks on persistent volumes. (#1676)
+- macOS: default direct-transport `ws://` URLs to port 18789; document `gateway.remote.transport`. (#1603) Thanks @ngutman.
+- Tests: cap Vitest workers on CI macOS to reduce timeouts. (#1597) Thanks @rohannagpal.
+- Tests: avoid fake-timer dependency in embedded runner stream mock to reduce CI flakes. (#1597) Thanks @rohannagpal.
+- Tests: increase embedded runner ordering test timeout to reduce CI flakes. (#1597) Thanks @rohannagpal.
+
+## 2026.1.23-1
+
+### Fixes
+
+- Packaging: include dist/tts output in npm tarball (fixes missing dist/tts/tts.js).
+
+## 2026.1.23
+
+### Highlights
+
+- TTS: move Telegram TTS into core + enable model-driven TTS tags by default for expressive audio replies. (#1559) Thanks @Glucksberg. https://docs.openclaw.ai/tts
+- Gateway: add `/tools/invoke` HTTP endpoint for direct tool calls (auth + tool policy enforced). (#1575) Thanks @vignesh07. https://docs.openclaw.ai/gateway/tools-invoke-http-api
+- Heartbeat: per-channel visibility controls (OK/alerts/indicator). (#1452) Thanks @dlauer. https://docs.openclaw.ai/gateway/heartbeat
+- Deploy: add Fly.io deployment support + guide. (#1570) https://docs.openclaw.ai/platforms/fly
+- Channels: add Tlon/Urbit channel plugin (DMs, group mentions, thread replies). (#1544) Thanks @wca4a. https://docs.openclaw.ai/channels/tlon
+
+### Changes
+
+- Channels: allow per-group tool allow/deny policies across built-in + plugin channels. (#1546) Thanks @adam91holt. https://docs.openclaw.ai/multi-agent-sandbox-tools
+- Agents: add Bedrock auto-discovery defaults + config overrides. (#1553) Thanks @fal3. https://docs.openclaw.ai/bedrock
+- CLI: add `openclaw system` for system events + heartbeat controls; remove standalone `wake`. (commit 71203829d) https://docs.openclaw.ai/cli/system
+- CLI: add live auth probes to `openclaw models status` for per-profile verification. (commit 40181afde) https://docs.openclaw.ai/cli/models
+- CLI: restart the gateway by default after `openclaw update`; add `--no-restart` to skip it. (commit 2c85b1b40)
+- Browser: add node-host proxy auto-routing for remote gateways (configurable per gateway/node). (commit c3cb26f7c)
+- Plugins: add optional `llm-task` JSON-only tool for workflows. (#1498) Thanks @vignesh07. https://docs.openclaw.ai/tools/llm-task
+- Markdown: add per-channel table conversion (bullets for Signal/WhatsApp, code blocks elsewhere). (#1495) Thanks @odysseus0.
+- Agents: keep system prompt time zone-only and move current time to `session_status` for better cache hits. (commit 66eec295b)
+- Agents: remove redundant bash tool alias from tool registration/display. (#1571) Thanks @Takhoffman.
+- Docs: add cron vs heartbeat decision guide (with Lobster workflow notes). (#1533) Thanks @JustYannicc. https://docs.openclaw.ai/automation/cron-vs-heartbeat
+- Docs: clarify HEARTBEAT.md empty file skips heartbeats, missing file still runs. (#1535) Thanks @JustYannicc. https://docs.openclaw.ai/gateway/heartbeat
+
+### Fixes
+
+- Sessions: accept non-UUID sessionIds for history/send/status while preserving agent scoping. (#1518)
+- Heartbeat: accept plugin channel ids for heartbeat target validation + UI hints.
+- Messaging/Sessions: mirror outbound sends into target session keys (threads + dmScope), create session entries on send, and normalize session key casing. (#1520, commit 4b6cdd1d3)
+- Sessions: reject array-backed session stores to prevent silent wipes. (#1469)
+- Gateway: compare Linux process start time to avoid PID recycling lock loops; keep locks unless stale. (#1572) Thanks @steipete.
+- Gateway: accept null optional fields in exec approval requests. (#1511) Thanks @pvoo.
+- Exec approvals: persist allowlist entry ids to keep macOS allowlist rows stable. (#1521) Thanks @ngutman.
+- Exec: honor tools.exec ask/security defaults for elevated approvals (avoid unwanted prompts). (commit 5662a9cdf)
+- Daemon: use platform PATH delimiters when building minimal service paths. (commit a4e57d3ac)
+- Linux: include env-configured user bin roots in systemd PATH and align PATH audits. (#1512) Thanks @robbyczgw-cla.
+- Tailscale: retry serve/funnel with sudo only for permission errors and keep original failure details. (#1551) Thanks @sweepies.
+- Docker: update gateway command in docker-compose and Hetzner guide. (#1514)
+- Agents: show tool error fallback when the last assistant turn only invoked tools
