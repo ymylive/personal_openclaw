@@ -1,0 +1,190 @@
+{
+  "generatedAt": "2026-03-17T13:04:13.512Z",
+  "restoreScript": "deployment/restore_large_text_files.py",
+  "largeTextFiles": [
+    {
+      "path": ".secrets.baseline",
+      "bytes": 71447,
+      "sha256": "d6e186986a336a57b64b91028fc5afaab213d5ef646c8e65e62068ae84b6734a",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/.secrets.baseline.part001.txt",
+        "deployment/mcp_large_text_chunks/.secrets.baseline.part002.txt"
+      ]
+    },
+    {
+      "path": "CHANGELOG.md",
+      "bytes": 143702,
+      "sha256": "568135bc53ede7ba385d82131d678d17c33273d0e20519da216149a176fd9d2f",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/CHANGELOG.md.part001.txt",
+        "deployment/mcp_large_text_chunks/CHANGELOG.md.part002.txt",
+        "deployment/mcp_large_text_chunks/CHANGELOG.md.part003.txt",
+        "deployment/mcp_large_text_chunks/CHANGELOG.md.part004.txt"
+      ]
+    },
+    {
+      "path": "README.md",
+      "bytes": 103833,
+      "sha256": "e80103f0d1be4da3b22c4fc253e9f1a45c69649c84e21ee30608bc32068be7fa",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/README.md.part001.txt",
+        "deployment/mcp_large_text_chunks/README.md.part002.txt",
+        "deployment/mcp_large_text_chunks/README.md.part003.txt"
+      ]
+    },
+    {
+      "path": "apps/macos/Sources/OpenClawProtocol/GatewayModels.swift",
+      "bytes": 68054,
+      "sha256": "cb2924b1dfd3a6d98804edaa86454a449278005a5b92e58f53874981007a1659",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/apps/macos/Sources/OpenClawProtocol/GatewayModels.swift.part001.txt",
+        "deployment/mcp_large_text_chunks/apps/macos/Sources/OpenClawProtocol/GatewayModels.swift.part002.txt"
+      ]
+    },
+    {
+      "path": "apps/shared/OpenClawKit/Sources/OpenClawProtocol/GatewayModels.swift",
+      "bytes": 68054,
+      "sha256": "cb2924b1dfd3a6d98804edaa86454a449278005a5b92e58f53874981007a1659",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/apps/shared/OpenClawKit/Sources/OpenClawProtocol/GatewayModels.swift.part001.txt",
+        "deployment/mcp_large_text_chunks/apps/shared/OpenClawKit/Sources/OpenClawProtocol/GatewayModels.swift.part002.txt"
+      ]
+    },
+    {
+      "path": "docs/.i18n/zh-CN.tm.jsonl",
+      "bytes": 577295,
+      "sha256": "a48a3ecf6d80c00dc5830375de71e8ba0c66758824bfc232ab66bcbd699e753a",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/docs/.i18n/zh-CN.tm.jsonl.part001.txt",
+        "deployment/mcp_large_text_chunks/docs/.i18n/zh-CN.tm.jsonl.part002.txt",
+        "deployment/mcp_large_text_chunks/docs/.i18n/zh-CN.tm.jsonl.part003.txt",
+        "deployment/mcp_large_text_chunks/docs/.i18n/zh-CN.tm.jsonl.part004.txt",
+        "deployment/mcp_large_text_chunks/docs/.i18n/zh-CN.tm.jsonl.part005.txt",
+        "deployment/mcp_large_text_chunks/docs/.i18n/zh-CN.tm.jsonl.part006.txt",
+        "deployment/mcp_large_text_chunks/docs/.i18n/zh-CN.tm.jsonl.part007.txt",
+        "deployment/mcp_large_text_chunks/docs/.i18n/zh-CN.tm.jsonl.part008.txt",
+        "deployment/mcp_large_text_chunks/docs/.i18n/zh-CN.tm.jsonl.part009.txt",
+        "deployment/mcp_large_text_chunks/docs/.i18n/zh-CN.tm.jsonl.part010.txt",
+        "deployment/mcp_large_text_chunks/docs/.i18n/zh-CN.tm.jsonl.part011.txt",
+        "deployment/mcp_large_text_chunks/docs/.i18n/zh-CN.tm.jsonl.part012.txt",
+        "deployment/mcp_large_text_chunks/docs/.i18n/zh-CN.tm.jsonl.part013.txt"
+      ]
+    },
+    {
+      "path": "docs/gateway/configuration.md",
+      "bytes": 118641,
+      "sha256": "ed863ecd879245f1bd9683249a927643deeb07c7dd663b794495240aebe9a8ef",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/docs/gateway/configuration.md.part001.txt",
+        "deployment/mcp_large_text_chunks/docs/gateway/configuration.md.part002.txt",
+        "deployment/mcp_large_text_chunks/docs/gateway/configuration.md.part003.txt"
+      ]
+    },
+    {
+      "path": "docs/help/faq.md",
+      "bytes": 121744,
+      "sha256": "b26158bbfd9a180ed50fa06d476215ed9fe7e66d6b35118707fe60b38e6f0498",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/docs/help/faq.md.part001.txt",
+        "deployment/mcp_large_text_chunks/docs/help/faq.md.part002.txt",
+        "deployment/mcp_large_text_chunks/docs/help/faq.md.part003.txt"
+      ]
+    },
+    {
+      "path": "docs/zh-CN/gateway/configuration.md",
+      "bytes": 117579,
+      "sha256": "66381abe1537b922a31688eb3d705e2ab5e761f9cb602996514cd5a5fce3041b",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/docs/zh-CN/gateway/configuration.md.part001.txt",
+        "deployment/mcp_large_text_chunks/docs/zh-CN/gateway/configuration.md.part002.txt"
+      ]
+    },
+    {
+      "path": "docs/zh-CN/help/faq.md",
+      "bytes": 124539,
+      "sha256": "e8a8742dafad46e596702635cc7c2383d003f7da8be30c7ee4f2bdbf801f77fc",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/docs/zh-CN/help/faq.md.part001.txt",
+        "deployment/mcp_large_text_chunks/docs/zh-CN/help/faq.md.part002.txt"
+      ]
+    },
+    {
+      "path": "extensions/bluebubbles/src/monitor.test.ts",
+      "bytes": 77098,
+      "sha256": "cdee33c90205865e1c814fd7366fc9f02bd18829ac4d6493d63c8014a43defc8",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/extensions/bluebubbles/src/monitor.test.ts.part001.txt",
+        "deployment/mcp_large_text_chunks/extensions/bluebubbles/src/monitor.test.ts.part002.txt"
+      ]
+    },
+    {
+      "path": "extensions/bluebubbles/src/monitor.ts",
+      "bytes": 83764,
+      "sha256": "9c775e4d8d66742d81988ba4fe698ee5b2c3d39bedd531d14b66734bac6ebbb5",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/extensions/bluebubbles/src/monitor.ts.part001.txt",
+        "deployment/mcp_large_text_chunks/extensions/bluebubbles/src/monitor.ts.part002.txt"
+      ]
+    },
+    {
+      "path": "extensions/open-prose/skills/prose/compiler.md",
+      "bytes": 82791,
+      "sha256": "72ccab1bd232e8d810b961d414a593fd8ad7a9fe15cfbba473818e27870d5d25",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/extensions/open-prose/skills/prose/compiler.md.part001.txt",
+        "deployment/mcp_large_text_chunks/extensions/open-prose/skills/prose/compiler.md.part002.txt"
+      ]
+    },
+    {
+      "path": "src/telegram/bot.test.ts",
+      "bytes": 95376,
+      "sha256": "cf9e6f0db0b9c207ac845b6fbbfbcb81e1739d026275299000f40eaa0d65ad77",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/src/telegram/bot.test.ts.part001.txt",
+        "deployment/mcp_large_text_chunks/src/telegram/bot.test.ts.part002.txt",
+        "deployment/mcp_large_text_chunks/src/telegram/bot.test.ts.part003.txt"
+      ]
+    },
+    {
+      "path": "ui/src/ui/views/agents.ts",
+      "bytes": 66669,
+      "sha256": "0cd6d31dafd7a3ea69fc73e297075aa2697cd438f62ce3b3a609a534048c0887",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/ui/src/ui/views/agents.ts.part001.txt",
+        "deployment/mcp_large_text_chunks/ui/src/ui/views/agents.ts.part002.txt"
+      ]
+    },
+    {
+      "path": "ui/src/ui/views/usage.ts",
+      "bytes": 169128,
+      "sha256": "46749df7e0dabd91b75d58c06d3574b2d557f60e1ae2aa03a524916945dc2066",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/ui/src/ui/views/usage.ts.part001.txt",
+        "deployment/mcp_large_text_chunks/ui/src/ui/views/usage.ts.part002.txt",
+        "deployment/mcp_large_text_chunks/ui/src/ui/views/usage.ts.part003.txt",
+        "deployment/mcp_large_text_chunks/ui/src/ui/views/usage.ts.part004.txt"
+      ]
+    },
+    {
+      "path": "workspace/finance_system/dashboard_assets/finance_dashboard.js",
+      "bytes": 112690,
+      "sha256": "e8b61a5e085b833c3e683b8de1cb0d8e2dc071b06095598a4c61f3055627db80",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/workspace/finance_system/dashboard_assets/finance_dashboard.js.part001.txt",
+        "deployment/mcp_large_text_chunks/workspace/finance_system/dashboard_assets/finance_dashboard.js.part002.txt",
+        "deployment/mcp_large_text_chunks/workspace/finance_system/dashboard_assets/finance_dashboard.js.part003.txt"
+      ]
+    },
+    {
+      "path": "workspace/finance_system/report_bot.py",
+      "bytes": 150920,
+      "sha256": "2c103fa2500022b32be5bcb94f2c975e305c9ed0da3abbe60ea4b08f9671c82c",
+      "chunks": [
+        "deployment/mcp_large_text_chunks/workspace/finance_system/report_bot.py.part001.txt",
+        "deployment/mcp_large_text_chunks/workspace/finance_system/report_bot.py.part002.txt",
+        "deployment/mcp_large_text_chunks/workspace/finance_system/report_bot.py.part003.txt",
+        "deployment/mcp_large_text_chunks/workspace/finance_system/report_bot.py.part004.txt"
+      ]
+    }
+  ]
+}

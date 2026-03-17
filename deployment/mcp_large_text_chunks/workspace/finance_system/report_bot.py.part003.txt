@@ -1,0 +1,1118 @@
+.add(dedupe_key)
+        combined.append(item)
+
+    if not combined:
+        combined = select_major_news(primary_items + secondary_items, limit=limit)
+
+    if not limit or NEWS_SOURCE_CAP <= 0:
+        return combined[:limit] if limit else combined
+
+    diversified: List[dict] = []
+    overflow: List[dict] = []
+    source_counts: Dict[str, int] = {}
+    for item in combined:
+        source = normalize_news_source(item)
+        count = source_counts.get(source, 0)
+        if count < NEWS_SOURCE_CAP:
+            diversified.append(item)
+            source_counts[source] = count + 1
+        else:
+            overflow.append(item)
+        if len(diversified) >= limit:
+            return diversified[:limit]
+
+    for item in overflow:
+        diversified.append(item)
+        if len(diversified) >= limit:
+            break
+    return diversified[:limit]
+
+
+def sort_and_dedupe_news(items: List[dict], limit: Optional[int] = None) -> List[dict]:
+    epoch = datetime(1970, 1, 1, tzinfo=TZ)
+    sorted_items = sorted(
+        items,
+        key=lambda item: parse_datetime_candidate(str(item.get("published_at", ""))) or epoch,
+        reverse=True,
+    )
+    normalized: List[dict] = []
+    seen = set()
+    for item in sorted_items:
+        title = clean_text(str(item.get("title", "")))
+        url = str(item.get("url", "")).strip()
+        if not title or not url:
+            continue
+        dedupe_key = (title.lower(), url)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        normalized.append(
+            {
+                **item,
+                "title": title,
+                "url": url,
+                "source": normalize_news_source(item),
+            }
+        )
+        if limit and len(normalized) >= limit:
+            break
+    return normalized
+
+
+def split_telegram_text(text: str, limit: int = TELEGRAM_TEXT_LIMIT) -> List[str]:
+    text = text.strip()
+    if not text:
+        return []
+    chunks: List[str] = []
+    current = ""
+    for paragraph in text.split("\n\n"):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+        candidate = paragraph if not current else f"{current}\n\n{paragraph}"
+        if len(candidate) <= limit:
+            current = candidate
+            continue
+        if current:
+            chunks.append(current)
+            current = ""
+        if len(paragraph) <= limit:
+            current = paragraph
+            continue
+        line_buffer = ""
+        for line in paragraph.split("\n"):
+            line = line.rstrip()
+            candidate = line if not line_buffer else f"{line_buffer}\n{line}"
+            if len(candidate) <= limit:
+                line_buffer = candidate
+                continue
+            if line_buffer:
+                chunks.append(line_buffer)
+                line_buffer = ""
+            while len(line) > limit:
+                chunks.append(line[:limit])
+                line = line[limit:]
+            line_buffer = line
+        if line_buffer:
+            current = line_buffer
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def build_market_watch_points(news_items: List[dict]) -> List[str]:
+    combined = " ".join(clean_text(str(item.get("title", ""))).lower() for item in news_items)
+    watch_points: List[str] = []
+    if any(keyword in combined for keyword in ("fed", "rate", "yield", "inflation", "cpi", "jobs", "payroll")):
+        watch_points.append("关注美联储/通胀/利率线索，留意美股与美元利率联动。")
+    if any(keyword in combined for keyword in ("bitcoin", "btc", "crypto", "ethereum", "eth", "sol")):
+        watch_points.append("加密资产消息密集，控制高波动仓位与 Beta 暴露。")
+    if any(keyword in combined for keyword in ("gold", "silver", "oil", "crude", "commodity", "safe haven")):
+        watch_points.append("黄金白银/原油受避险与通胀预期驱动，注意商品链轮动。")
+    if any(keyword in combined for keyword in ("china", "hong kong", "a-share", "yuan", "property", "stimulus")):
+        watch_points.append("中国、港股与 A 股政策线索增多，留意人民币和风险偏好变化。")
+    if not watch_points:
+        watch_points.append("暂无单一主线，优先观察成交量、波动率和仓位集中度。")
+    return watch_points[:3]
+
+
+def build_section(title: str, rows: List[str]) -> List[str]:
+    return [title, *rows, ""]
+
+
+def build_news_message(jin10_news: List[dict], web_news: List[dict]) -> str:
+    dt = now_cn().strftime("%Y-%m-%d %H:%M")
+    major_items = select_major_news_with_primary(
+        jin10_news,
+        web_news,
+        limit=MAX_MORNING_NEWS_ITEMS,
+    )
+    watch_points = build_market_watch_points(major_items)
+
+    lines = [
+        f"【龙虾 08:00 新闻总结】{dt}",
+        f"范围：仅统计最近 {NEWS_LOOKBACK_HOURS} 小时内的重大财经/市场事件",
+        "",
+    ]
+
+    news_rows: List[str] = []
+    if major_items:
+        for index, item in enumerate(major_items, start=1):
+            news_rows.append(f"{index}. [{format_timestamp(item.get('published_at'))}] {item['title']}")
+            news_rows.append(f"   来源：{item['source']} | {item['url']}")
+    else:
+        news_rows.append(f"- 最近 {NEWS_LOOKBACK_HOURS} 小时暂未筛出高置信度重大事件。")
+    lines.extend(build_section("最近24小时大事", news_rows))
+
+    focus_rows = [f"- {item}" for item in watch_points]
+    focus_rows.append("- 若盘中出现放量异动，优先复核单一高波动仓位。")
+    lines.extend(build_section("市场关注", focus_rows))
+    return "\n".join(lines)
+
+
+def should_ignore_trade_day() -> bool:
+    return os.getenv("OPENCLAW_IGNORE_TRADE_DAY", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def build_morning_news_drivers(jin10_news: List[dict], web_news: List[dict]) -> List[dict]:
+    return select_major_news_with_primary(
+        sort_and_dedupe_news(jin10_news),
+        sort_and_dedupe_news(web_news),
+        limit=2,
+    )
+
+
+def build_morning_market_summary(
+    label: str,
+    clean_rows: List[dict],
+    candidate_rows: List[dict],
+    picks: List[dict],
+    index_rows: List[dict],
+) -> dict:
+    index_moves = [safe_float(item.get("pct_chg"), 0.0) for item in index_rows if item]
+    leaders = sorted(clean_rows, key=lambda item: item.get("pct_chg", -999.0), reverse=True)[:3]
+    return {
+        "label": label,
+        "breadth": compute_market_breadth(clean_rows),
+        "candidate_count": len(candidate_rows),
+        "picks": picks,
+        "indices": index_rows,
+        "leaders": leaders,
+        "temperature": classify_market_temperature(index_moves, compute_market_breadth(clean_rows)),
+    }
+
+
+def fetch_morning_market_snapshot() -> dict:
+    tasks = {
+        "a_stocks": fetch_a_share_spot_rows,
+        "a_etfs": fetch_a_etf_spot_rows,
+        "hk_spot": fetch_hk_spot_rows,
+        "us_spot": fetch_us_spot_rows,
+        "a_index": fetch_a_index_rows,
+        "hk_index": fetch_hk_index_rows,
+    }
+    results = {key: [] for key in tasks}
+    errors: Dict[str, str] = {}
+
+    with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+        future_map = {executor.submit(loader): key for key, loader in tasks.items()}
+        for future in as_completed(future_map):
+            key = future_map[future]
+            try:
+                results[key] = future.result()
+            except Exception as exc:
+                errors[key] = str(exc)[:200]
+                results[key] = []
+
+    for key in ("a_stocks", "hk_spot"):
+        if not results.get(key) and key not in errors:
+            errors[key] = "empty payload"
+
+    a_stock_clean = filter_morning_rows(results["a_stocks"], market="A", liquidity_only=False)
+    a_stock_candidates = filter_morning_rows(results["a_stocks"], market="A", liquidity_only=True)
+    a_etf_candidates = filter_morning_rows(results["a_etfs"], market="A", liquidity_only=True)
+    a_candidates = a_stock_candidates + a_etf_candidates
+
+    hk_clean = filter_morning_rows(results["hk_spot"], market="HK", liquidity_only=False)
+    hk_candidates = filter_morning_rows(results["hk_spot"], market="HK", liquidity_only=True)
+
+    us_clean = filter_morning_rows(results["us_spot"], market="US", liquidity_only=False)
+    us_candidates = filter_morning_rows(results["us_spot"], market="US", liquidity_only=True)
+
+    a_index_rows = results["a_index"]
+    hk_index_rows = results["hk_index"]
+
+    a_summary = build_morning_market_summary(
+        label="A股",
+        clean_rows=a_stock_clean,
+        candidate_rows=a_candidates,
+        picks=choose_market_picks(a_candidates),
+        index_rows=[
+            item
+            for item in (
+                find_index_row(a_index_rows, names=("上证指数",), codes=("000001",)),
+                find_index_row(a_index_rows, names=("深证成指",), codes=("399001",)),
+                find_index_row(a_index_rows, names=("创业板指",), codes=("399006",)),
+            )
+            if item is not None
+        ],
+    )
+    hk_summary = build_morning_market_summary(
+        label="港股",
+        clean_rows=hk_clean,
+        candidate_rows=hk_candidates,
+        picks=choose_market_picks(hk_candidates),
+        index_rows=[
+            item
+            for item in (
+                find_index_row(hk_index_rows, names=("恒生指数",), codes=("HSI",)),
+                find_index_row(hk_index_rows, names=("恒生科技指数",), codes=("HSTECH", "HSTECF2L")),
+            )
+            if item is not None
+        ],
+    )
+    us_summary = build_morning_market_summary(
+        label="美股",
+        clean_rows=us_clean,
+        candidate_rows=us_candidates,
+        picks=choose_market_picks(us_candidates),
+        index_rows=[
+            item
+            for item in (
+                next((row for row in us_clean if row.get("symbol") == "SPY"), None),
+                next((row for row in us_clean if row.get("symbol") == "QQQ"), None),
+            )
+            if item is not None
+        ],
+    )
+
+    return {
+        "generated_at": now_cn().isoformat(),
+        "markets": {"A": a_summary, "HK": hk_summary, "US": us_summary},
+        "errors": errors,
+        "raw_counts": {
+            "a_stocks": len(results["a_stocks"]),
+            "a_etfs": len(results["a_etfs"]),
+            "hk_spot": len(results["hk_spot"]),
+            "us_spot": len(results["us_spot"]),
+        },
+    }
+
+
+def get_morning_skip_reason(snapshot: Optional[dict] = None) -> str:
+    if should_ignore_trade_day():
+        return ""
+    if now_cn().weekday() >= 5:
+        return "周末，A股和港股休市，早报不推送。"
+    if snapshot is None:
+        return ""
+    snapshot = snapshot or {}
+    markets = snapshot.get("markets") or {}
+    a_total = safe_int(((markets.get("A") or {}).get("breadth") or {}).get("total"), 0)
+    hk_total = safe_int(((markets.get("HK") or {}).get("breadth") or {}).get("total"), 0)
+    errors = snapshot.get("errors") or {}
+    if a_total <= 0 and hk_total <= 0 and not errors:
+        return "A股和港股均未取到有效盘中数据，判定为非交易日，早报不推送。"
+    return ""
+
+
+def assess_morning_health(snapshot: Optional[dict]) -> dict:
+    snapshot = snapshot or {}
+    critical_issues: List[str] = []
+    warning_issues: List[str] = []
+
+    errors = snapshot.get("errors") or {}
+    for key, value in sorted(errors.items()):
+        issue = f"source {key}: {clean_text(str(value))}"
+        if key in MORNING_HEALTH_CRITICAL_SOURCE_KEYS:
+            critical_issues.append(issue)
+        else:
+            warning_issues.append(issue)
+
+    markets = snapshot.get("markets") or {}
+    for market, threshold in MORNING_HEALTH_MIN_CANDIDATES.items():
+        summary = markets.get(market) or {}
+        candidate_count = safe_int(summary.get("candidate_count"), 0)
+        breadth_total = safe_int((summary.get("breadth") or {}).get("total"), 0)
+        critical_candidate_floor = safe_int(MORNING_HEALTH_CRITICAL_MIN_CANDIDATES.get(market), 0)
+        critical_breadth_floor = safe_int(MORNING_HEALTH_CRITICAL_MIN_BREADTH.get(market), 0)
+
+        if candidate_count < threshold:
+            issue = f"{market} coverage low: candidates {candidate_count} < {threshold}, breadth {breadth_total}"
+            if candidate_count <= critical_candidate_floor or breadth_total <= critical_breadth_floor:
+                critical_issues.append(issue)
+            else:
+                warning_issues.append(issue)
+
+    severity = ""
+    if critical_issues:
+        severity = "critical"
+    elif warning_issues:
+        severity = "warning"
+
+    return {
+        "severity": severity,
+        "critical_issues": critical_issues,
+        "warning_issues": warning_issues,
+        "issues": critical_issues + warning_issues,
+    }
+
+
+def build_morning_health_alert(snapshot: Optional[dict]) -> str:
+    snapshot = snapshot or {}
+    health = assess_morning_health(snapshot)
+    issues = health["issues"]
+    if not issues:
+        return ""
+
+    markets = snapshot.get("markets") or {}
+    raw_counts = snapshot.get("raw_counts") or {}
+    severity = str(health.get("severity", "")).upper() or "WARNING"
+    lines = [
+        f"【龙虾 10:00 数据源告警 | {severity}】{now_cn().strftime('%Y-%m-%d %H:%M')}",
+        "晨报已生成，但本次全市场扫描触发了健康告警：",
+        "",
+        "告警级别",
+        f"- {severity}",
+        "",
+        "异常摘要",
+        *[f"- {item}" for item in issues[:8]],
+        "",
+        "覆盖快照",
+        (
+            f"- A: breadth {safe_int(((markets.get('A') or {}).get('breadth') or {}).get('total'), 0)}"
+            f" | candidates {safe_int((markets.get('A') or {}).get('candidate_count'), 0)}"
+            f" | raw stocks {safe_int(raw_counts.get('a_stocks'), 0)}"
+            f" | raw etfs {safe_int(raw_counts.get('a_etfs'), 0)}"
+        ),
+        (
+            f"- HK: breadth {safe_int(((markets.get('HK') or {}).get('breadth') or {}).get('total'), 0)}"
+            f" | candidates {safe_int((markets.get('HK') or {}).get('candidate_count'), 0)}"
+            f" | raw spot {safe_int(raw_counts.get('hk_spot'), 0)}"
+        ),
+        (
+            f"- US: breadth {safe_int(((markets.get('US') or {}).get('breadth') or {}).get('total'), 0)}"
+            f" | candidates {safe_int((markets.get('US') or {}).get('candidate_count'), 0)}"
+            f" | raw spot {safe_int(raw_counts.get('us_spot'), 0)}"
+        ),
+        "",
+        "处理建议",
+        "- 优先检查对应上游接口是否限流、超时或返回空载荷。",
+        "- 若连续多日告警，再调整阈值或补充新的 fallback 源。",
+    ]
+    return "\n".join(lines)
+
+
+def market_currency_prefix(market: str) -> str:
+    return {"A": "¥", "HK": "HK$", "US": "$"}.get(market, "")
+
+
+def build_pick_reason(item: dict) -> str:
+    reasons = []
+    if item.get("asset_type") == "etf":
+        reasons.append("高流动性 ETF，适合做指数/板块表达")
+    if safe_float(item.get("pct_chg"), 0.0) != 0:
+        reasons.append(f"日内 {format_pct_points(item.get('pct_chg', 0.0))}")
+    if safe_float(item.get("ret_20d"), 0.0) > 0:
+        reasons.append(f"20日 {item['ret_20d'] * 100:+.1f}%")
+    elif safe_float(item.get("ret_60d"), 0.0) > 0:
+        reasons.append(f"60日 {item['ret_60d'] * 100:+.1f}%")
+    if safe_float(item.get("amount"), 0.0) > 0:
+        reasons.append(
+            f"成交额 {format_compact_amount(item.get('amount', 0.0), market_currency_prefix(str(item.get('market', ''))))}"
+        )
+    return "，".join(reasons[:3]) or "流动性和趋势评分靠前"
+
+
+def build_entry_plan(item: dict) -> str:
+    price = safe_float(item.get("price"), 0.0)
+    pct_chg = safe_float(item.get("pct_chg"), 0.0)
+    market = str(item.get("market", ""))
+    if price <= 0:
+        return "等待下一根有效价格确认后再执行"
+    if market == "US":
+        if pct_chg >= 2.0:
+            return f"今晚高开不追，回踩 {format_price_compact(price * 0.99)} 附近再看"
+        return f"今晚开盘后 15 分钟再看，{format_price_compact(price * 0.995)}-{format_price_compact(price * 1.005)} 试单"
+    if pct_chg >= 3.0:
+        return f"不追高，回踩 {format_price_compact(price * 0.985)}-{format_price_compact(price * 0.995)} 再考虑"
+    if pct_chg >= 0:
+        return f"现价附近轻仓试单，参考 {format_price_compact(price * 0.995)}-{format_price_compact(price * 1.005)}"
+    reference = max(price, safe_float(item.get("open"), price))
+    return f"先等重回 {format_price_compact(reference)} 上方再考虑"
+
+
+def build_stop_target_text(item: dict) -> str:
+    price = safe_float(item.get("price"), 0.0)
+    if price <= 0:
+        return "止损/止盈位待价格恢复后更新"
+    stop_price = price * 0.97
+    target_low = price * 1.05
+    target_high = price * 1.08
+    return (
+        f"止损 {format_price_compact(stop_price)} | "
+        f"目标 {format_price_compact(target_low)}-{format_price_compact(target_high)}"
+    )
+
+
+def build_morning_market_line(summary: dict) -> str:
+    breadth = summary.get("breadth") or {}
+    index_bits = [
+        f"{item['name']} {format_pct_points(item.get('pct_chg', 0.0))}"
+        for item in summary.get("indices", [])
+        if item
+    ]
+    index_text = "；".join(index_bits[:3]) if index_bits else "暂无核心指数快照"
+    return (
+        f"- {summary.get('label', '')}：{summary.get('temperature', '中性')}；"
+        f"{index_text}；上涨 {safe_int(breadth.get('up'), 0)} / 下跌 {safe_int(breadth.get('down'), 0)}；"
+        f"入池 {safe_int(summary.get('candidate_count'), 0)}"
+    )
+
+
+def build_market_execution_text(summary: dict, market: str) -> str:
+    temperature = str(summary.get("temperature", "中性"))
+    if market == "US":
+        if temperature in {"偏强", "中性偏强"}:
+            return "今晚以前两名各 4%-6% 观察，开盘 15 分钟后再决定，不追高开。"
+        if temperature == "中性":
+            return "今晚只留 1 个观察标的，仓位压到 3%-4%。"
+        return "今晚以观察为主，除非开盘后与 SPY/QQQ 共振转强。"
+    if temperature == "偏强":
+        return "可按前两名分配 4%-6% 观察仓，单市场上限 12%。"
+    if temperature == "中性偏强":
+        return "优先首选标的 4%-5% 试单，次选控制在 3%-4%。"
+    if temperature == "中性":
+        return "只做首选 3%-4% 轻仓，不追涨。"
+    return "先观察，除非重新站稳开盘价并放量。"
+
+
+def normalize_reference_symbol(symbol: str) -> str:
+    normalized = str(symbol or "").strip().upper()
+    return normalized.replace(".SS", ".SH")
+
+
+def build_ai_reference_rows(reference_state: Optional[dict], snapshot: dict) -> List[str]:
+    reference_state = reference_state or {}
+    raw_positions = (reference_state.get("positions") if isinstance(reference_state, dict) else {}) or {}
+    positions = raw_positions if isinstance(raw_positions, dict) else {}
+    if not positions:
+        return [
+            "- AI模拟持仓参考：当前模拟账户为空仓，晨报只输出观察清单，不直接触发模拟调仓。",
+            "- 使用原则：晨报负责盘前筛选和盘中复核，AI模拟持仓仍沿用原有调仓与风控逻辑。",
+        ]
+
+    ranked_positions = sorted(
+        positions.items(),
+        key=lambda item: safe_float((item[1] or {}).get("portfolio_pct"), 0.0) if isinstance(item[1], dict) else 0.0,
+        reverse=True,
+    )
+    top_position_bits = []
+    reference_symbols = {}
+    for symbol, detail in ranked_positions:
+        detail = detail if isinstance(detail, dict) else {}
+        normalized_symbol = normalize_reference_symbol(symbol)
+        reference_symbols[normalized_symbol] = detail
+        if len(top_position_bits) < 3:
+            top_position_bits.append(
+                f"{resolve_symbol_name(symbol)}({symbol}) {format_pct(safe_float(detail.get('portfolio_pct'), 0.0))}"
+            )
+
+    overlap_bits = []
+    for market in ("A", "HK", "US"):
+        for item in snapshot["markets"][market].get("picks", []):
+            normalized_symbol = normalize_reference_symbol(item.get("symbol", ""))
+            if normalized_symbol in reference_symbols:
+                overlap_bits.append(f"{item['name']}({item['display_symbol']})")
+
+    rows = [f"- AI模拟持仓参考：当前前3仓 = {'；'.join(top_position_bits)}。"]
+    if overlap_bits:
+        rows.append(f"- 晨报与模拟仓重叠：{'；'.join(overlap_bits[:3])}，可优先作为盘中复核对象。")
+    else:
+        rows.append("- 晨报候选与模拟仓当前重叠较少，默认只做参考，不直接改写 AI 模拟持仓。")
+    rows.append("- 使用原则：晨报信号是参考层，AI模拟持仓仍以既有调仓与风控逻辑为主。")
+    return rows
+
+
+def build_morning_report(
+    snapshot: dict,
+    jin10_news: List[dict],
+    web_news: List[dict],
+    reference_state: Optional[dict] = None,
+) -> str:
+    dt = now_cn().strftime("%Y-%m-%d %H:%M")
+    drivers = build_morning_news_drivers(jin10_news, web_news)
+    reference_state = reference_state if isinstance(reference_state, dict) else {}
+    raw_positions = reference_state.get("positions") or {}
+    position_map = raw_positions if isinstance(raw_positions, dict) else {}
+    reference_symbols = {
+        normalize_reference_symbol(symbol)
+        for symbol in position_map
+    }
+    lines = [
+        f"【龙虾 10:00 全市场晨报】{dt}",
+        "范围：A股 + 港股 + 美股隔夜，全市场扫描（个股 + 高流动性 ETF），仅交易日推送。",
+        "定位：晨报信号只作为 AI 模拟持仓系统的盘前参考，不直接改写模拟仓。",
+        "",
+    ]
+
+    market_rows = [
+        build_morning_market_line(snapshot["markets"]["A"]),
+        build_morning_market_line(snapshot["markets"]["HK"]),
+        build_morning_market_line(snapshot["markets"]["US"]),
+    ]
+    if drivers:
+        for index, item in enumerate(drivers, start=1):
+            market_rows.append(f"- 驱动 {index}：[{format_timestamp(item.get('published_at'))}] {item['title']}（{item['source']}）")
+    else:
+        market_rows.append("- 驱动：最近 24 小时未筛出高置信度宏观主线，优先观察量价而非追消息。")
+    lines.extend(build_section("A. 市场温度", market_rows))
+
+    pick_rows: List[str] = []
+    for market in ("A", "HK", "US"):
+        summary = snapshot["markets"][market]
+        if not summary.get("picks"):
+            pick_rows.append(f"- {summary['label']}：暂无同时满足流动性与趋势条件的标的。")
+            continue
+        pick_rows.append(f"- {summary['label']}优先标的：")
+        for index, item in enumerate(summary["picks"], start=1):
+            reference_tag = " | AI模拟仓重叠" if normalize_reference_symbol(item.get("symbol", "")) in reference_symbols else ""
+            pick_rows.append(
+                f"  {index}. {item['name']} ({item['display_symbol']}) | 现价 {format_price_compact(item['price'])} | "
+                f"{format_pct_points(item.get('pct_chg', 0.0))} | {build_pick_reason(item)}{reference_tag}"
+            )
+            pick_rows.append(f"     执行：{build_entry_plan(item)}；{build_stop_target_text(item)}")
+    lines.extend(build_section("B. 今日优先标的", pick_rows))
+
+    plan_rows = [
+        (
+            f"- 总仓位控制：轻仓试错，总仓不超过 {int(MORNING_TOTAL_POSITION_LIMIT * 100)}%，"
+            f"单市场不超过 {int(MORNING_SINGLE_MARKET_LIMIT * 100)}%，"
+            f"单标的不超过 {int(MORNING_SINGLE_POSITION_LIMIT * 100)}%。"
+        ),
+        f"- A股：{build_market_execution_text(snapshot['markets']['A'], 'A')}",
+        f"- 港股：{build_market_execution_text(snapshot['markets']['HK'], 'HK')}",
+        f"- 美股：{build_market_execution_text(snapshot['markets']['US'], 'US')}",
+        *build_ai_reference_rows(reference_state, snapshot),
+        "- 盘中加仓信号：指数/ETF 同向放量，且标的站稳开盘价与 VWAP。",
+        "- 盘中减仓信号：30 分钟内跌破开盘价并放量，或单日冲高 >5% 后明显回落。",
+    ]
+    key_stop_parts = []
+    for market in ("A", "HK", "US"):
+        for item in snapshot["markets"][market].get("picks", [])[:1]:
+            stop_price = safe_float(item.get("price"), 0.0) * 0.97
+            key_stop_parts.append(f"{item['display_symbol']} {format_price_compact(stop_price)}")
+    if key_stop_parts:
+        plan_rows.append(f"- 关键止损位：{'；'.join(key_stop_parts)}。")
+    lines.extend(build_section("C. 仓位与执行计划", plan_rows))
+
+    risk_rows = [
+        "- 若 A股/港股核心指数 30 分钟内由红翻绿且放量，主动降低白天仓位。",
+        "- 若今晚美股高开超过 2% 后快速回落，不追涨，等待二次确认。",
+    ]
+    if now_cn().weekday() == 4:
+        risk_rows.append("- 今天是周五，若白天仓位已有利润，优先考虑减半过周末。")
+    if snapshot.get("errors"):
+        error_text = "；".join(f"{key}: {value}" for key, value in sorted(snapshot["errors"].items())[:3])
+        risk_rows.append(f"- 数据源提示：{error_text}")
+    risk_rows.append("- 风险提示：本分析仅供模拟盘/流程参考，不构成任何投资建议。")
+    lines.extend(build_section("D. 风险提示", risk_rows))
+    return "\n".join(lines)
+
+
+def build_investment_advice(config: dict, category_metrics: Dict[str, List[dict]], allocations: dict, analysis: dict) -> List[str]:
+    advice = []
+    category_views = []
+    for category in config.get("categories", []):
+        key = category["key"]
+        metrics = sorted(category_metrics.get(key, []), key=lambda row: row.get("score", -999), reverse=True)
+        if not metrics:
+            continue
+        sample = metrics[: min(3, len(metrics))]
+        avg_20d = sum(item.get("ret_20d", 0.0) for item in sample) / len(sample)
+        avg_60d = sum(item.get("ret_60d", 0.0) for item in sample) / len(sample)
+        category_views.append((avg_60d, avg_20d, resolve_category_name(category), metrics[0]))
+
+    if category_views:
+        strongest = max(category_views, key=lambda row: row[0])
+        weakest = min(category_views, key=lambda row: row[0])
+        if strongest[0] > 0:
+            advice.append(
+                f"强势方向：{strongest[2]} 当前由 {resolve_symbol_name(strongest[3]['symbol'], strongest[3].get('name', ''))}({strongest[3]['symbol']}) 领跑，可继续跟踪趋势延续。"
+            )
+        if weakest[0] < 0:
+            advice.append(
+                f"弱势方向：{weakest[2]} 在 20 日和 60 日维度仍偏弱，避免盲目追高与逆势加仓。"
+            )
+
+    largest_position = None
+    for detail in allocations.values():
+        for item in detail.get("picks", []):
+            if largest_position is None or item.get("portfolio_pct", 0.0) > largest_position.get("portfolio_pct", 0.0):
+                largest_position = item
+    if largest_position and largest_position.get("portfolio_pct", 0.0) > 0.18:
+        advice.append(
+            f"集中度提醒：{resolve_symbol_name(largest_position['symbol'], largest_position.get('name', ''))}({largest_position['symbol']}) 当前占组合 {format_pct(largest_position['portfolio_pct'])}，若继续放大需考虑分散风险。"
+        )
+    else:
+        advice.append("仓位分散度尚可，继续控制单一资产与单一主题暴露。")
+
+    if analysis.get("turnover_pct", 0.0) > 0.10:
+        advice.append("调仓动作偏多，注意成交成本与滑点，避免情绪化来回切换。")
+    else:
+        advice.append("当前换手可控，维持小步调整节奏即可。")
+    return advice[:3]
+
+
+def build_noon_report(
+    config: dict,
+    category_metrics: Dict[str, List[dict]],
+    allocations: dict,
+    jin10_news: List[dict],
+    web_news: List[dict],
+    state: dict,
+    analysis: dict,
+    market_status: Optional[dict] = None,
+) -> str:
+    dt = now_cn().strftime("%Y-%m-%d %H:%M")
+    jin10_items = sort_and_dedupe_news(jin10_news)
+    web_items = sort_and_dedupe_news(web_news)
+    merged_news = select_major_news_with_primary(
+        jin10_items,
+        web_items,
+        limit=MAX_NOON_NEWS_ITEMS,
+    )
+    lines = [f"【龙虾 12:00 金融分析】{dt}", ""]
+
+    overview_rows = [
+        f"- 组合市值：{format_usd(analysis.get('portfolio_value', 0.0))}",
+        f"- 当日盈亏：{format_signed_pct(analysis.get('daily_pnl_pct', 0.0))}（{format_signed_usd(analysis.get('daily_pnl_amount', 0.0))}）",
+        f"- 预计换手：{format_pct(analysis.get('turnover_pct', 0.0))}（{format_usd(analysis.get('turnover_amount', 0.0))}）",
+    ]
+    category_pnl = sorted((analysis.get("category_pnl") or {}).items(), key=lambda row: abs(row[1]), reverse=True)
+    for key, pnl_amount in category_pnl[:3]:
+        overview_rows.append(f"- 波动较大：{resolve_category_name(key, config.get('categories'))} {format_signed_usd(pnl_amount)}")
+    if analysis.get("top_contributors"):
+        top = analysis["top_contributors"][0]
+        overview_rows.append(
+            f"- 贡献最多：{resolve_symbol_name(top['symbol'], top.get('name', ''))}({top['symbol']}) {format_signed_pct(top['ret_1d'])}，贡献 {format_signed_usd(top['pnl_amount'])}"
+        )
+    if analysis.get("top_detractors"):
+        weak = analysis["top_detractors"][0]
+        overview_rows.append(
+            f"- 拖累最多：{resolve_symbol_name(weak['symbol'], weak.get('name', ''))}({weak['symbol']}) {format_signed_pct(weak['ret_1d'])}，拖累 {format_signed_usd(weak['pnl_amount'])}"
+        )
+    lines.extend(build_section("组合概览", overview_rows))
+    lines.extend(build_section("行情数据", build_market_status_rows(market_status)))
+
+    momentum_rows: List[str] = []
+    for category in config.get("categories", []):
+        key = category["key"]
+        metrics = sorted(category_metrics.get(key, []), key=lambda row: row.get("score", -999), reverse=True)
+        category_name = resolve_category_name(category)
+        if not metrics:
+            momentum_rows.append(f"- {category_name}：暂无可用行情数据")
+            continue
+        leader = metrics[0]
+        tail = metrics[-1]
+        momentum_rows.append(
+            f"- {category_name}领跑：{resolve_symbol_name(leader['symbol'], leader.get('name', ''))}({leader['symbol']}) 1D {format_pct(leader['ret_1d'])} / 20D {format_pct(leader['ret_20d'])} / 60D {format_pct(leader['ret_60d'])}"
+        )
+        if tail['symbol'] != leader['symbol']:
+            momentum_rows.append(
+                f"  拖后：{resolve_symbol_name(tail['symbol'], tail.get('name', ''))}({tail['symbol']}) 1D {format_pct(tail['ret_1d'])} / 20D {format_pct(tail['ret_20d'])} / 60D {format_pct(tail['ret_60d'])}"
+            )
+    lines.extend(build_section("板块动量", momentum_rows))
+
+    allocation_rows: List[str] = [f"- 当前组合总资产：{format_usd(state.get('portfolio_value', 0.0))}"]
+    for category in config.get("categories", []):
+        key = category['key']
+        detail = allocations.get(key, {})
+        allocation_rows.append(f"- {resolve_category_name(category)}子类仓位：{format_pct(float(detail.get('category_pct', 0.0)))}")
+        picks = detail.get('picks', [])
+        if not picks:
+            allocation_rows.append("  - 暂无持仓")
+            continue
+        for item in picks[:MAX_ALLOCATION_PICKS]:
+            allocation_rows.append(
+                f"  - {resolve_symbol_name(item['symbol'], item.get('name', ''))}({item['symbol']})：子类内 {format_pct(float(item['category_pct']))}，组合内 {format_pct(float(item['portfolio_pct']))}"
+            )
+    lines.extend(build_section("AI模拟持仓", allocation_rows))
+
+    news_rows: List[str] = []
+    if merged_news:
+        for index, item in enumerate(merged_news, start=1):
+            news_rows.append(
+                f"- 事件 {index} [{format_timestamp(item.get('published_at'))}] {item['title']}（{item['source']}）"
+            )
+    else:
+        news_rows.append(f"- 最近 {NEWS_LOOKBACK_HOURS} 小时暂无高置信度重大事件。")
+    lines.extend(build_section("最近24小时大事", news_rows))
+
+    advice_rows = [f"- {item}" for item in build_investment_advice(config, category_metrics, allocations, analysis)]
+    lines.extend(build_section("投资提醒", advice_rows))
+    lines.extend(build_section("风险提示", ["- 本分析基于公开行情与模拟持仓推演，不构成任何投资建议。"]))
+    return "\n".join(lines)
+
+
+def dashboard_mode_enabled() -> bool:
+    return os.getenv("FINANCE_DASHBOARD_MODE", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def get_dashboard_public_base_url() -> str:
+    for env_name in ("FINANCE_DASHBOARD_PUBLIC_BASE_URL", "OPENCLAW_PUBLIC_BASE_URL"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value.rstrip("/")
+    return DEFAULT_DASHBOARD_PUBLIC_BASE_URL.rstrip("/")
+
+
+def discover_dashboard_secret_from_service() -> str:
+    candidates = [
+        Path("/etc/systemd/system/openclaw-finance-dashboard.service"),
+        Path("/lib/systemd/system/openclaw-finance-dashboard.service"),
+    ]
+    pattern = re.compile(r"FINANCE_DASHBOARD_SECRET=([A-Za-z0-9._:-]+)")
+    for path in candidates:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        match = pattern.search(text)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def resolve_dashboard_secret(token: str = "") -> str:
+    explicit = os.getenv("FINANCE_DASHBOARD_SECRET", "").strip()
+    if explicit:
+        return explicit
+    service_secret = discover_dashboard_secret_from_service()
+    if service_secret:
+        return service_secret
+    if token:
+        return token
+    return "openclaw-finance-dashboard-demo-secret"
+
+
+def build_dashboard_access_route(secret: str, date_str: str = "") -> str:
+    resolved_date = date_str or now_cn().date().isoformat()
+    return f"/finance/access/{build_daily_key(secret, resolved_date)}"
+
+
+def build_dashboard_access_url(secret: str, date_str: str = "", public_base_url: str = "") -> str:
+    base_url = (public_base_url or get_dashboard_public_base_url()).rstrip("/")
+    return f"{base_url}{build_dashboard_access_route(secret, date_str)}"
+
+
+def build_dashboard_telegram_message(
+    access_url: str,
+    notice: str = "今日金融分析工作台 / Today's Finance Dashboard",
+) -> str:
+    return f"{notice}\n{access_url}".strip()
+
+
+def infer_market_from_symbol(symbol: str) -> str:
+    normalized = normalize_reference_symbol(symbol)
+    if normalized.endswith(".HK"):
+        return "HK"
+    if normalized.endswith(".SH") or normalized.endswith(".SZ"):
+        return "A"
+    if normalized.endswith("-USD") or normalized in {"GC=F", "SI=F", "GLD", "SLV"}:
+        return "Macro"
+    return "US"
+
+
+def build_morning_ai_reference(reference_state: Optional[dict], snapshot: dict) -> dict:
+    reference_state = reference_state or {}
+    raw_positions = (reference_state.get("positions") if isinstance(reference_state, dict) else {}) or {}
+    positions = raw_positions if isinstance(raw_positions, dict) else {}
+    ranked_positions = sorted(
+        positions.items(),
+        key=lambda item: safe_float((item[1] or {}).get("portfolio_pct"), 0.0) if isinstance(item[1], dict) else 0.0,
+        reverse=True,
+    )
+    top_positions = []
+    reference_symbols = {}
+    for symbol, detail in ranked_positions:
+        detail = detail if isinstance(detail, dict) else {}
+        normalized_symbol = normalize_reference_symbol(symbol)
+        reference_symbols[normalized_symbol] = detail
+        if len(top_positions) < 5:
+            top_positions.append(
+                {
+                    "symbol": symbol,
+                    "name": resolve_symbol_name(symbol, detail.get("name", "")),
+                    "portfolio_pct": safe_float(detail.get("portfolio_pct"), 0.0),
+                }
+            )
+    overlap_picks = []
+    for market in ("A", "HK", "US"):
+        for item in ((snapshot.get("markets") or {}).get(market) or {}).get("picks", []):
+            normalized_symbol = normalize_reference_symbol(item.get("symbol", ""))
+            if normalized_symbol not in reference_symbols:
+                continue
+            overlap_picks.append(
+                {
+                    "market": market,
+                    "symbol": item.get("symbol", ""),
+                    "display_symbol": item.get("display_symbol") or item.get("symbol", ""),
+                    "name": item.get("name", ""),
+                }
+            )
+    if not positions:
+        note = "当前模拟账户为空仓，晨报只输出观察清单，不直接触发模拟调仓。"
+    elif overlap_picks:
+        note = "晨报候选与 AI 模拟仓出现重叠，优先作为盘中复核和风控跟踪对象。"
+    else:
+        note = "晨报候选与当前模拟仓重叠较少，默认作为下一轮候选池参考。"
+    return {
+        "has_positions": bool(positions),
+        "top_positions": top_positions,
+        "overlap_picks": overlap_picks,
+        "note": note,
+    }
+
+
+def build_portfolio_market_linkage(positions: dict, morning_payload: Optional[dict]) -> dict:
+    positions = positions if isinstance(positions, dict) else {}
+    morning_payload = morning_payload if isinstance(morning_payload, dict) else {}
+    position_lookup = {}
+    market_exposure = {"A": 0.0, "HK": 0.0, "US": 0.0, "Macro": 0.0}
+    ranked_positions = []
+    for symbol, detail in positions.items():
+        detail = detail if isinstance(detail, dict) else {}
+        normalized_symbol = normalize_reference_symbol(symbol)
+        market = infer_market_from_symbol(symbol)
+        portfolio_pct = safe_float(detail.get("portfolio_pct"), 0.0)
+        market_exposure[market] = market_exposure.get(market, 0.0) + portfolio_pct
+        resolved = {
+            "symbol": symbol,
+            "name": resolve_symbol_name(symbol, detail.get("name", "")),
+            "portfolio_pct": portfolio_pct,
+            "amount_usd": safe_float(detail.get("amount_usd"), 0.0),
+            "market": market,
+        }
+        position_lookup[normalized_symbol] = resolved
+        ranked_positions.append(resolved)
+    ranked_positions.sort(key=lambda item: item["portfolio_pct"], reverse=True)
+
+    overlap_picks = []
+    watchlist_candidates = []
+    market_temperatures = {}
+    for market in ("A", "HK", "US"):
+        market_summary = ((morning_payload.get("markets") or {}).get(market) or {})
+        market_temperatures[market] = market_summary.get("temperature", "")
+        for item in market_summary.get("picks", []):
+            normalized_symbol = normalize_reference_symbol(item.get("symbol", ""))
+            linked = {
+                "market": market,
+                "symbol": item.get("symbol", ""),
+                "display_symbol": item.get("display_symbol") or item.get("symbol", ""),
+                "name": item.get("name", ""),
+            }
+            if normalized_symbol in position_lookup:
+                overlap_picks.append(
+                    {
+                        **linked,
+                        "portfolio_pct": position_lookup[normalized_symbol]["portfolio_pct"],
+                        "amount_usd": position_lookup[normalized_symbol]["amount_usd"],
+                    }
+                )
+            else:
+                watchlist_candidates.append(linked)
+
+    notes = []
+    if overlap_picks:
+        notes.append(f"晨报优先标的与模拟仓重叠 {len(overlap_picks)} 个，可直接复核强弱延续。")
+    else:
+        notes.append("晨报优先标的与当前模拟仓暂无重叠，优先作为候选池和减仓对照。")
+    if ranked_positions and ranked_positions[0]["portfolio_pct"] > 0.18:
+        notes.append(
+            f"集中度偏高：{ranked_positions[0]['name']} 当前占组合 {format_pct(ranked_positions[0]['portfolio_pct'])}。"
+        )
+    weak_markets = [
+        market
+        for market in ("A", "HK", "US")
+        if market_exposure.get(market, 0.0) > 0.0 and market_temperatures.get(market) in {"偏弱", "谨慎"}
+    ]
+    if weak_markets:
+        notes.append(f"当前组合在弱势市场仍有暴露：{' / '.join(weak_markets)}。")
+    return {
+        "overlap_count": len(overlap_picks),
+        "overlap_picks": overlap_picks[:6],
+        "watchlist_candidates": watchlist_candidates[:6],
+        "market_exposure": market_exposure,
+        "top_holdings": ranked_positions[:5],
+        "notes": notes[:4],
+    }
+
+
+def build_news_stage_payload(
+    jin10_news: List[dict],
+    web_news: List[dict],
+    message_text: str,
+    telegram_delivery: dict,
+) -> dict:
+    major_items = select_major_news_with_primary(jin10_news, web_news, limit=MAX_MORNING_NEWS_ITEMS)
+    major_items, news_summary = summarize_news_with_openclaw(major_items, limit=MAX_MORNING_NEWS_ITEMS)
+    return {
+        "date": now_cn().date().isoformat(),
+        "generated_at": now_cn().isoformat(),
+        "push_type": "news",
+        "status": "ready",
+        "message_text": message_text,
+        "selected_news": major_items,
+        "news_summary": news_summary,
+        "watch_points": build_market_watch_points(major_items),
+        "telegram_delivery": telegram_delivery,
+    }
+
+
+def build_morning_stage_payload(
+    snapshot: dict,
+    jin10_news: List[dict],
+    web_news: List[dict],
+    reference_state: Optional[dict],
+    message_text: str,
+    telegram_delivery: dict,
+) -> dict:
+    drivers, _ = summarize_news_with_openclaw(
+        build_morning_news_drivers(jin10_news, web_news),
+        limit=2,
+    )
+    return {
+        "date": now_cn().date().isoformat(),
+        "generated_at": snapshot.get("generated_at") or now_cn().isoformat(),
+        "push_type": "morning",
+        "status": "ready",
+        "message_text": message_text,
+        "markets": snapshot.get("markets") or {},
+        "drivers": drivers,
+        "ai_reference": build_morning_ai_reference(reference_state, snapshot),
+        "errors": snapshot.get("errors") or {},
+        "raw_counts": snapshot.get("raw_counts") or {},
+        "telegram_delivery": telegram_delivery,
+    }
+
+
+def build_health_stage_payload(snapshot: Optional[dict], severity: str, telegram_delivery: dict) -> dict:
+    health = assess_morning_health(snapshot or {})
+    issues = list(health.get("issues") or [])
+    return {
+        "date": now_cn().date().isoformat(),
+        "generated_at": now_cn().isoformat(),
+        "push_type": "health",
+        "status": "ready" if issues else "not_triggered",
+        "severity": (severity or health.get("severity") or "none").lower(),
+        "issues": issues,
+        "critical_issues": list(health.get("critical_issues") or []),
+        "warning_issues": list(health.get("warning_issues") or []),
+        "raw_counts": (snapshot or {}).get("raw_counts") or {},
+        "telegram_delivery": telegram_delivery,
+    }
+
+
+def build_noon_stage_payload(
+    config: dict,
+    category_metrics: Dict[str, List[dict]],
+    allocations: dict,
+    state: dict,
+    analysis: dict,
+    market_status: Optional[dict],
+    message_text: str,
+    telegram_delivery: dict,
+    recent_news: Optional[List[dict]] = None,
+    morning_payload: Optional[dict] = None,
+) -> dict:
+    category_pnl_rows = [
+        {
+            "key": key,
+            "name": resolve_category_name(key, config.get("categories")),
+            "pnl_amount": safe_float(amount, 0.0),
+        }
+        for key, amount in (analysis.get("category_pnl") or {}).items()
+    ]
+    positions_map = (state.get("positions") or {}) if isinstance(state, dict) else {}
+    positions = []
+    for symbol, detail in positions_map.items():
+        detail = detail if isinstance(detail, dict) else {}
+        positions.append(
+            {
+                "symbol": symbol,
+                "name": resolve_symbol_name(symbol, detail.get("name", "")),
+                "category": detail.get("category", ""),
+                "amount_usd": safe_float(detail.get("amount_usd"), 0.0),
+                "category_pct": safe_float(detail.get("category_pct"), 0.0),
+                "portfolio_pct": safe_float(detail.get("portfolio_pct"), 0.0),
+                "updated_at": detail.get("updated_at") or now_cn().isoformat(),
+            }
+        )
+    positions.sort(key=lambda item: item["portfolio_pct"], reverse=True)
+
+    allocation_rows = []
+    for category in config.get("categories", []):
+        key = category["key"]
+        detail = allocations.get(key, {})
+        picks = []
+        for item in detail.get("picks", []):
+            picks.append(
+                {
+                    "symbol": item.get("symbol", ""),
+                    "name": resolve_symbol_name(item.get("symbol", ""), item.get("name", "")),
+                    "amount_usd": safe_float(item.get("amount_usd"), 0.0),
+                    "category_pct": safe_float(item.get("category_pct"), 0.0),
+                    "portfolio_pct": safe_float(item.get("portfolio_pct"), 0.0),
+                    "updated_at": now_cn().isoformat(),
+                }
+            )
+        allocation_rows.append(
+            {
+                "key": key,
+                "name": resolve_category_name(category),
+                "category_pct": safe_float(detail.get("category_pct"), 0.0),
+                "category_amount": safe_float(detail.get("category_amount"), 0.0),
+                "picks": picks,
+            }
+        )
+
+    category_momentum = []
+    for category in config.get("categories", []):
+        key = category["key"]
+        metrics = sorted(category_metrics.get(key, []), key=lambda row: row.get("score", -999), reverse=True)
+        if not metrics:
+            continue
+        leader = dict(metrics[0])
+        laggard = dict(metrics[-1]) if metrics[-1]["symbol"] != leader["symbol"] else None
+        leader["name"] = resolve_symbol_name(leader["symbol"], leader.get("name", ""))
+        if laggard:
+            laggard["name"] = resolve_symbol_name(laggard["symbol"], laggard.get("name", ""))
+        category_momentum.append(
+            {
+                "key": key,
+                "name": resolve_category_name(category),
+                "leader": leader,
+                "laggard": laggard,
+            }
+        )
+
+    ai_summary = build_noon_ai_summary(
+        config=config,
+        analysis=analysis,
+        allocations=allocations,
+        market_status=market_status,
+        recent_news=recent_news or [],
+    )
+    return {
+        "date": now_cn().date().isoformat(),
+        "generated_at": now_cn().isoformat(),
+        "push_type": "noon",
+        "status": "ready",
+        "message_text": message_text,
+        "portfolio_summary": {
+            "previous_portfolio_value": safe_float(analysis.get("previous_portfolio_value"), 0.0),
+            "portfolio_value": safe_float(analysis.get("portfolio_value"), 0.0),
+            "daily_pnl_amount": safe_float(analysis.get("daily_pnl_amount"), 0.0),
+            "daily_pnl_pct": safe_float(analysis.get("daily_pnl_pct"), 0.0),
+            "turnover_amount": safe_float(analysis.get("turnover_amount"), 0.0),
+            "turnover_pct": safe_float(analysis.get("turnover_pct"), 0.0),
+            "category_pnl": category_pnl_rows,
+            "top_contributors": list(analysis.get("top_contributors") or []),
+            "top_detractors": list(analysis.get("top_detractors") or []),
+        },
+        "allocations": allocation_rows,
+        "positions": positions,
+        "category_momentum": category_momentum,
+        "advice": list(ai_summary.get("advice") or build_investment_advice(config, category_metrics, allocations, analysis)),
+        "ai_summary": ai_summary,
+        "market_status": market_status or {},
+        "market_linkage": build_portfolio_market_linkage(positions_map, morning_payload),
+        "telegram_delivery": telegram_delivery,
+    }
+
+
+def persist_dashboard_stage(stage: str, payload: dict, secret: str) -> None:
+    date_str = str(payload.get("date") or now_cn().date().isoformat())
+    write_stage_payload(DASHBOARD_DATA_DIR, date_str, stage, payload)
+    latest = load_latest_bundle(DASHB

@@ -1,0 +1,285 @@
+OARD_DATA_DIR)
+    history_dates = list_history_dates(DASHBOARD_DATA_DIR)
+    generated_at = max(
+        [
+            str((item or {}).get("generated_at") or "")
+            for item in latest.values()
+        ]
+        or [now_cn().isoformat()]
+    )
+    index_payload = build_index_payload(
+        date=date_str,
+        generated_at=generated_at,
+        content=latest,
+        history_dates=history_dates,
+        telegram_access_route=build_dashboard_access_route(secret, date_str),
+        valid_until=valid_until_for_date(date_str),
+    )
+    write_stage_payload(DASHBOARD_DATA_DIR, date_str, "index", index_payload)
+
+
+def load_latest_morning_payload() -> dict:
+    latest = load_latest_bundle(DASHBOARD_DATA_DIR)
+    payload = latest.get("morning") or {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def get_runtime_paths() -> List[Path]:
+    custom_home = os.getenv("OPENCLAW_HOME", "").strip()
+    paths = []
+    if custom_home:
+        paths.append(Path(custom_home) / "openclaw.json")
+    paths.extend([
+        Path("/home/node/.openclaw/openclaw.json"),
+        Path("/root/.openclaw/openclaw.json"),
+    ])
+    return paths
+
+
+def get_allow_paths() -> List[Path]:
+    custom_home = os.getenv("OPENCLAW_HOME", "").strip()
+    paths = []
+    if custom_home:
+        paths.append(Path(custom_home) / "credentials" / "telegram-allowFrom.json")
+    paths.extend([
+        Path("/home/node/.openclaw/credentials/telegram-allowFrom.json"),
+        Path("/root/.openclaw/credentials/telegram-allowFrom.json"),
+    ])
+    return paths
+
+
+def get_telegram_target(config: dict, override_chat_id: str = "") -> Tuple[str, str]:
+    token = ""
+    for runtime_path in get_runtime_paths():
+        runtime_cfg = load_json(runtime_path, {})
+        telegram_cfg = ((runtime_cfg.get("channels") or {}).get("telegram") or {})
+        token = telegram_cfg.get("botToken") or telegram_cfg.get("token") or ""
+        if token:
+            break
+    if not token:
+        token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    if override_chat_id:
+        return token, override_chat_id
+
+    for allow_file in get_allow_paths():
+        allow = load_json(allow_file, {})
+        arr = allow.get("allowFrom") or []
+        if arr:
+            return token, str(arr[0])
+    return token, ""
+
+
+def send_telegram(token: str, chat_id: str, text: str) -> dict:
+    if not token or not chat_id:
+        return {"ok": False, "error": "missing bot token or chat_id"}
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    message_ids: List[int] = []
+    for chunk in split_telegram_text(text):
+        payload = {"chat_id": chat_id, "text": chunk, "disable_web_page_preview": True}
+        try:
+            response = requests.post(url, json=payload, timeout=20)
+            data = response.json()
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "message_ids": message_ids}
+        if not isinstance(data, dict) or not data.get("ok"):
+            if isinstance(data, dict):
+                data.setdefault("message_ids", message_ids)
+                return data
+            return {"ok": False, "error": "bad response", "message_ids": message_ids}
+        message_id = ((data.get("result") or {}).get("message_id"))
+        if isinstance(message_id, int):
+            message_ids.append(message_id)
+    return {"ok": True, "message_ids": message_ids, "result": {"message_id": message_ids[-1] if message_ids else None}}
+
+
+def build_delivery_state_from_result(send_result: dict, target_route: str) -> dict:
+    ok = bool((send_result or {}).get("ok"))
+    error_text = (
+        str((send_result or {}).get("error") or (send_result or {}).get("description") or "").strip()[:200] or None
+    )
+    return build_access_delivery(
+        status="sent" if ok else "failed",
+        target_route=target_route,
+        sent_at=now_cn().isoformat() if ok else None,
+        message_ids=[str(item) for item in ((send_result or {}).get("message_ids") or [])],
+        error=error_text,
+    )
+
+
+def ensure_utf8_stdio() -> None:
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="replace")
+
+def main():
+    ensure_utf8_stdio()
+    parser = argparse.ArgumentParser(description="OpenClaw finance daily reporter")
+    parser.add_argument("--mode", choices=["news", "morning", "noon"], required=True)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--chat-id", default="")
+    args = parser.parse_args()
+
+    config = load_json(CONFIG_FILE, {})
+    if not config:
+        print("missing config", file=sys.stderr)
+        sys.exit(2)
+
+    token, chat_id = get_telegram_target(config, override_chat_id=args.chat_id)
+    dashboard_secret = resolve_dashboard_secret(token)
+    dashboard_enabled = dashboard_mode_enabled()
+
+    skip_send = False
+    health_alert_message = ""
+    health_alert_level = ""
+    main_stage_name = args.mode
+    main_stage_payload = None
+    health_stage_payload = None
+    if args.mode == "news":
+        jin10_news = fetch_jin10_news(limit=JIN10_FETCH_LIMIT, lookback_hours=NEWS_LOOKBACK_HOURS)
+        web_news = fetch_web_news(limit=WEB_NEWS_FETCH_LIMIT, lookback_hours=NEWS_LOOKBACK_HOURS)
+        message = build_news_message(jin10_news, web_news)
+        main_stage_payload = build_news_stage_payload(
+            jin10_news,
+            web_news,
+            message,
+            build_access_delivery(
+                status="skipped" if args.dry_run else "pending",
+                target_route=build_dashboard_access_route(dashboard_secret),
+            ),
+        )
+    elif args.mode == "morning":
+        skip_reason = get_morning_skip_reason()
+        if skip_reason:
+            skip_send = True
+            message = skip_reason
+        else:
+            jin10_news = fetch_jin10_news(limit=JIN10_FETCH_LIMIT, lookback_hours=NEWS_LOOKBACK_HOURS)
+            web_news = fetch_web_news(limit=WEB_NEWS_FETCH_LIMIT, lookback_hours=NEWS_LOOKBACK_HOURS)
+            snapshot = fetch_morning_market_snapshot()
+            skip_reason = get_morning_skip_reason(snapshot)
+            if skip_reason:
+                skip_send = True
+                message = skip_reason
+            else:
+                health_alert_level = str(assess_morning_health(snapshot).get("severity", ""))
+                health_alert_message = build_morning_health_alert(snapshot)
+                reference_state = load_json(STATE_FILE, {})
+                message = build_morning_report(
+                    snapshot,
+                    jin10_news,
+                    web_news,
+                    reference_state=reference_state,
+                )
+                target_route = build_dashboard_access_route(dashboard_secret)
+                main_stage_payload = build_morning_stage_payload(
+                    snapshot,
+                    jin10_news,
+                    web_news,
+                    reference_state,
+                    message,
+                    build_access_delivery(
+                        status="skipped" if args.dry_run else "pending",
+                        target_route=target_route,
+                    ),
+                )
+                health_should_notify = bool((assess_morning_health(snapshot).get("issues") or []))
+                health_stage_payload = build_health_stage_payload(
+                    snapshot,
+                    health_alert_level,
+                    build_access_delivery(
+                        status=("skipped" if args.dry_run else "pending") if health_should_notify else "not_triggered",
+                        target_route=target_route,
+                    ),
+                )
+    else:
+        jin10_news = fetch_jin10_news(limit=JIN10_FETCH_LIMIT, lookback_hours=NEWS_LOOKBACK_HOURS)
+        web_news = fetch_web_news(limit=WEB_NEWS_FETCH_LIMIT, lookback_hours=NEWS_LOOKBACK_HOURS)
+        recent_news = select_major_news_with_primary(jin10_news, web_news, limit=MAX_NOON_NEWS_ITEMS)
+        category_metrics, symbol_metrics, market_status = fetch_market_snapshot(config, prefer_live=True)
+        target = calc_target_weights(category_metrics, config)
+        result = update_portfolio_state(config, symbol_metrics, target)
+        result["state"]["market_data"] = market_status
+        save_json(STATE_FILE, result["state"])
+        message = build_noon_report(
+            config=config,
+            category_metrics=category_metrics,
+            allocations=result["allocations"],
+            jin10_news=jin10_news,
+            web_news=web_news,
+            state=result["state"],
+            analysis=result["analysis"],
+            market_status=market_status,
+        )
+        main_stage_payload = build_noon_stage_payload(
+            config=config,
+            category_metrics=category_metrics,
+            allocations=result["allocations"],
+            state=result["state"],
+            analysis=result["analysis"],
+            market_status=market_status,
+            recent_news=recent_news,
+            message_text=message,
+            telegram_delivery=build_access_delivery(
+                status="skipped" if args.dry_run else "pending",
+                target_route=build_dashboard_access_route(dashboard_secret),
+            ),
+            morning_payload=load_latest_morning_payload(),
+        )
+
+    print(message)
+    print("\n---END-REPORT---\n")
+
+    if args.dry_run:
+        return
+    if main_stage_payload:
+        persist_dashboard_stage(main_stage_name, main_stage_payload, dashboard_secret)
+    if health_stage_payload:
+        persist_dashboard_stage("health", health_stage_payload, dashboard_secret)
+    if skip_send:
+        print(json.dumps({"ok": True, "skipped": True, "reason": message}, ensure_ascii=False))
+        return
+
+    main_target_route = build_dashboard_access_route(dashboard_secret)
+    access_url = build_dashboard_access_url(dashboard_secret)
+    outbound_text = build_dashboard_telegram_message(access_url) if dashboard_enabled else message
+    send_result = send_telegram(token, chat_id, outbound_text)
+    if main_stage_payload:
+        main_stage_payload["telegram_delivery"] = build_delivery_state_from_result(send_result, main_target_route)
+        persist_dashboard_stage(main_stage_name, main_stage_payload, dashboard_secret)
+    if args.mode == "morning" and health_alert_message:
+        health_target_route = build_dashboard_access_route(dashboard_secret)
+        if send_result.get("ok") and health_stage_payload and health_stage_payload.get("status") == "ready":
+            health_text = (
+                build_dashboard_telegram_message(access_url, notice="晨间数据预警，请查看金融分析工作台")
+                if dashboard_enabled
+                else health_alert_message
+            )
+            send_result["health_alert"] = send_telegram(token, chat_id, health_text)
+            send_result["health_alert"]["severity"] = health_alert_level
+            health_stage_payload["telegram_delivery"] = build_delivery_state_from_result(
+                send_result["health_alert"],
+                health_target_route,
+            )
+        else:
+            send_result["health_alert"] = {
+                "ok": False,
+                "skipped": True,
+                "reason": "main morning report send failed",
+                "severity": health_alert_level,
+            }
+            if health_stage_payload and health_stage_payload.get("status") == "ready":
+                health_stage_payload["telegram_delivery"] = build_access_delivery(
+                    status="skipped",
+                    target_route=health_target_route,
+                    error="main morning report send failed",
+                )
+        if health_stage_payload:
+            persist_dashboard_stage("health", health_stage_payload, dashboard_secret)
+    print(json.dumps(send_result, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()
