@@ -1,0 +1,1347 @@
+e outer item"
+  context: item
+```
+
+### Nesting
+
+Loops can be nested:
+
+```prose
+repeat 2:
+  repeat 3:
+    session "Inner task"
+```
+
+Different loop types can be combined:
+
+```prose
+let items = ["a", "b"]
+repeat 2:
+  for item in items:
+    session "Process item"
+      context: item
+```
+
+### Complete Example
+
+```prose
+# Generate multiple variations of ideas
+repeat 3:
+  session "Generate a creative startup idea"
+
+session "Select the best idea from the options above"
+
+# Research the selected idea from multiple angles
+let angles = ["market", "technology", "competition"]
+parallel for angle in angles:
+  session "Research this angle of the startup idea"
+    context: angle
+
+session "Synthesize all research into a business plan"
+```
+
+### Validation Rules
+
+| Check                         | Severity | Message                              |
+| ----------------------------- | -------- | ------------------------------------ |
+| Repeat count must be positive | Error    | Repeat count must be positive        |
+| Repeat count must be integer  | Error    | Repeat count must be an integer      |
+| Undefined collection variable | Error    | Undefined collection variable        |
+| Loop variable shadows outer   | Warning  | Loop variable shadows outer variable |
+
+---
+
+## Unbounded Loops
+
+Unbounded loops provide iteration with AI-evaluated termination conditions. Unlike fixed loops, the iteration count is not known ahead of time - the OpenProse VM evaluates conditions at runtime using its intelligence to determine when to stop.
+
+### Discretion Markers
+
+Unbounded loops use **discretion markers** (`**...**`) to wrap AI-evaluated conditions. These markers signal that the enclosed text should be interpreted intelligently by the OpenProse VM at runtime, not as a literal boolean expression.
+
+```prose
+# The text inside **...** is evaluated by the AI
+loop until **the poem has vivid imagery and flows smoothly**:
+  session "Review and improve the poem"
+```
+
+For multi-line conditions, use triple-asterisks:
+
+```prose
+loop until ***
+  the document is complete
+  all sections have been reviewed
+  and formatting is consistent
+***:
+  session "Continue working on the document"
+```
+
+### Basic Loop
+
+The simplest unbounded loop runs indefinitely until explicitly limited:
+
+```prose
+loop:
+  session "Process next item"
+```
+
+**Warning**: Loops without termination conditions or max iterations generate a warning. Always include a safety limit:
+
+```prose
+loop (max: 50):
+  session "Process next item"
+```
+
+### Loop Until
+
+The `loop until` variant runs until a condition becomes true:
+
+```prose
+loop until **the task is complete**:
+  session "Continue working on the task"
+```
+
+The OpenProse VM evaluates the discretion condition after each iteration and exits when it determines the condition is satisfied.
+
+### Loop While
+
+The `loop while` variant runs while a condition remains true:
+
+```prose
+loop while **there are still items to process**:
+  session "Process the next item"
+```
+
+Semantically, `loop while **X**` is equivalent to `loop until **not X**`.
+
+### Iteration Variable
+
+Track the current iteration number using `as`:
+
+```prose
+loop until **done** as attempt:
+  session "Try approach"
+    context: attempt
+```
+
+The iteration variable:
+
+- Starts at 0
+- Increments by 1 each iteration
+- Is scoped to the loop body
+- Is implicitly `const` within each iteration
+
+### Safety Limits
+
+Specify maximum iterations with `(max: N)`:
+
+```prose
+# Stop after 10 iterations even if condition not met
+loop until **all bugs fixed** (max: 10):
+  session "Find and fix a bug"
+```
+
+The loop exits when:
+
+1. The condition is satisfied (for `until`/`while` variants), OR
+2. The maximum iteration count is reached
+
+### Complete Syntax
+
+All options can be combined:
+
+```prose
+loop until **condition** (max: N) as i:
+  body...
+```
+
+Order matters: condition comes before modifiers, modifiers before `as`.
+
+### Examples
+
+#### Iterative Improvement
+
+```prose
+session "Write an initial draft"
+
+loop until **the draft is polished and ready for review** (max: 5):
+  session "Review the current draft and identify issues"
+  session "Revise the draft to address the issues"
+
+session "Present the final draft"
+```
+
+#### Debugging Workflow
+
+```prose
+session "Run tests to identify failures"
+
+loop until **all tests pass** (max: 20) as attempt:
+  session "Identify the failing test"
+  session "Fix the bug causing the failure"
+  session "Run tests again"
+
+session "Confirm all tests pass and summarize fixes"
+```
+
+#### Consensus Building
+
+```prose
+parallel:
+  opinion1 = session "Get first expert opinion"
+  opinion2 = session "Get second expert opinion"
+
+loop until **experts have reached consensus** (max: 5):
+  session "Identify points of disagreement"
+    context: { opinion1, opinion2 }
+  session "Facilitate discussion to resolve differences"
+
+session "Document the final consensus"
+```
+
+#### Quality Threshold
+
+```prose
+let draft = session "Create initial document"
+
+loop while **quality score is below threshold** (max: 10):
+  draft = session "Review and improve the document"
+    context: draft
+  session "Calculate new quality score"
+
+session "Finalize the document"
+  context: draft
+```
+
+### Execution Semantics
+
+When the OpenProse VM encounters an unbounded loop:
+
+1. **Initialize**: Set iteration counter to 0
+2. **Check Condition** (for `until`/`while`):
+   - For `until`: Exit if condition is satisfied
+   - For `while`: Exit if condition is NOT satisfied
+3. **Check Limit**: Exit if iteration count >= max iterations
+4. **Execute Body**: Run all statements in the loop body
+5. **Increment**: Increase iteration counter
+6. **Repeat**: Go to step 2
+
+For basic `loop:` without conditions:
+
+- Only the max iteration limit can cause exit
+- Without max, the loop runs indefinitely (warning issued)
+
+### Condition Evaluation
+
+The OpenProse VM uses its intelligence to evaluate discretion conditions:
+
+1. **Context Awareness**: The condition is evaluated in the context of what has happened so far in the session
+2. **Semantic Understanding**: The condition text is interpreted semantically, not literally
+3. **Uncertainty Handling**: When uncertain, the OpenProse VM may:
+   - Continue iterating if progress is being made
+   - Exit early if diminishing returns are detected
+   - Use heuristics based on the condition's semantics
+
+### Nesting
+
+Unbounded loops can be nested with other loop types:
+
+```prose
+# Unbounded inside fixed
+repeat 3:
+  loop until **sub-task complete** (max: 10):
+    session "Work on sub-task"
+
+# Fixed inside unbounded
+loop until **all batches processed** (max: 5):
+  repeat 3:
+    session "Process batch item"
+
+# Multiple unbounded
+loop until **outer condition** (max: 5):
+  loop until **inner condition** (max: 10):
+    session "Deep iteration"
+```
+
+### Variable Scoping
+
+Loop variables follow the same scoping rules as fixed loops:
+
+```prose
+let i = session "outer"
+loop until **done** as i:
+  # 'i' here is the loop variable (shadows outer)
+  session "use loop i"
+    context: i
+# 'i' here refers to the outer variable again
+session "use outer i"
+  context: i
+```
+
+### Validation Rules
+
+| Check                         | Severity | Message                               |
+| ----------------------------- | -------- | ------------------------------------- |
+| Loop without max or condition | Warning  | Unbounded loop without max iterations |
+| Max iterations <= 0           | Error    | Max iterations must be positive       |
+| Max iterations not integer    | Error    | Max iterations must be an integer     |
+| Empty discretion condition    | Error    | Discretion condition cannot be empty  |
+| Very short condition          | Warning  | Discretion condition may be ambiguous |
+| Loop variable shadows outer   | Warning  | Loop variable shadows outer variable  |
+
+---
+
+## Pipeline Operations
+
+Pipeline operations provide functional-style collection transformations. They allow you to chain operations like map, filter, and reduce using the pipe operator (`|`).
+
+### Pipe Operator
+
+The pipe operator (`|`) passes a collection to a transformation operation:
+
+```prose
+let items = ["a", "b", "c"]
+let results = items | map:
+  session "Process this item"
+    context: item
+```
+
+### Map
+
+The `map` operation transforms each element in a collection:
+
+```prose
+let articles = ["article1", "article2", "article3"]
+
+let summaries = articles | map:
+  session "Summarize this article in one sentence"
+    context: item
+```
+
+Inside a map body, the implicit variable `item` refers to the current element being processed.
+
+### Filter
+
+The `filter` operation keeps elements that match a condition:
+
+```prose
+let items = ["one", "two", "three", "four", "five"]
+
+let short = items | filter:
+  session "Does this word have 4 or fewer letters? Answer yes or no."
+    context: item
+```
+
+The session in a filter body should return something the OpenProse VM can interpret as truthy/falsy (like "yes"/"no").
+
+### Reduce
+
+The `reduce` operation accumulates elements into a single result:
+
+```prose
+let ideas = ["AI assistant", "smart home", "health tracker"]
+
+let combined = ideas | reduce(summary, idea):
+  session "Add this idea to the summary, creating a cohesive concept"
+    context: [summary, idea]
+```
+
+The reduce operation requires explicit variable names:
+
+- First variable (`summary`): the accumulator
+- Second variable (`idea`): the current item
+
+The first item in the collection becomes the initial accumulator value.
+
+### Parallel Map (pmap)
+
+The `pmap` operation is like `map` but runs all transformations concurrently:
+
+```prose
+let tasks = ["task1", "task2", "task3"]
+
+let results = tasks | pmap:
+  session "Process this task in parallel"
+    context: item
+
+session "Aggregate all results"
+  context: results
+```
+
+This is similar to `parallel for`, but in pipeline syntax.
+
+### Chaining
+
+Pipeline operations can be chained to compose complex transformations:
+
+```prose
+let topics = ["quantum computing", "blockchain", "machine learning", "IoT"]
+
+let result = topics
+  | filter:
+      session "Is this topic trending? Answer yes or no."
+        context: item
+  | map:
+      session "Write a one-line startup pitch for this topic"
+        context: item
+
+session "Present the startup pitches"
+  context: result
+```
+
+Operations execute left-to-right: first filter, then map.
+
+### Complete Example
+
+```prose
+# Define a collection
+let articles = ["AI breakthroughs", "Climate solutions", "Space exploration"]
+
+# Process with chained operations
+let summaries = articles
+  | filter:
+      session "Is this topic relevant to technology? Answer yes or no."
+        context: item
+  | map:
+      session "Write a compelling one-paragraph summary"
+        context: item
+  | reduce(combined, summary):
+      session "Merge this summary into the combined document"
+        context: [combined, summary]
+
+# Present the final result
+session "Format and present the combined summaries"
+  context: summaries
+```
+
+### Implicit Variables
+
+| Operation | Available Variables                          |
+| --------- | -------------------------------------------- |
+| `map`     | `item` - current element                     |
+| `filter`  | `item` - current element                     |
+| `pmap`    | `item` - current element                     |
+| `reduce`  | Named explicitly: `reduce(accVar, itemVar):` |
+
+### Execution Semantics
+
+When the OpenProse VM encounters a pipeline:
+
+1. **Input**: Start with the input collection
+2. **For each operation**:
+   - **map**: Transform each element, producing a new collection
+   - **filter**: Keep elements where the session returns truthy
+   - **reduce**: Accumulate elements into a single value
+   - **pmap**: Transform all elements concurrently
+3. **Output**: Return the final transformed collection/value
+
+### Variable Scoping
+
+Pipeline variables are scoped to their operation body:
+
+```prose
+let item = "outer"
+let items = ["a", "b"]
+
+let results = items | map:
+  # 'item' here is the pipeline variable (shadows outer)
+  session "process"
+    context: item
+
+# 'item' here refers to the outer variable again
+session "use outer"
+  context: item
+```
+
+### Validation Rules
+
+| Check                           | Severity | Message                                            |
+| ------------------------------- | -------- | -------------------------------------------------- |
+| Undefined input collection      | Error    | Undefined collection variable                      |
+| Invalid pipe operator           | Error    | Expected pipe operator (map, filter, reduce, pmap) |
+| Reduce without variables        | Error    | Expected accumulator and item variables            |
+| Pipeline variable shadows outer | Warning  | Implicit/explicit variable shadows outer variable  |
+
+---
+
+## Error Handling
+
+OpenProse provides structured error handling with try/catch/finally blocks, throw statements, and retry mechanisms for resilient workflows.
+
+### Try/Catch Blocks
+
+The `try:` block wraps operations that might fail. The `catch:` block handles errors.
+
+```prose
+try:
+  session "Attempt risky operation"
+catch:
+  session "Handle the error gracefully"
+```
+
+#### Error Variable Access
+
+Use `catch as err:` to capture error context for the error handler:
+
+```prose
+try:
+  session "Call external API"
+catch as err:
+  session "Log and handle the error"
+    context: err
+```
+
+The error variable (`err`) contains contextual information about what went wrong and is only accessible within the catch block.
+
+### Try/Catch/Finally
+
+The `finally:` block always executes, whether the try block succeeds or fails:
+
+```prose
+try:
+  session "Acquire and use resource"
+catch:
+  session "Handle any errors"
+finally:
+  session "Always clean up resource"
+```
+
+#### Execution Order
+
+1. **Try succeeds**: try body → finally body
+2. **Try fails**: try body (until failure) → catch body → finally body
+
+### Try/Finally (No Catch)
+
+For cleanup without error handling, use try/finally:
+
+```prose
+try:
+  session "Open connection and do work"
+finally:
+  session "Close connection"
+```
+
+### Throw Statement
+
+The `throw` statement raises or re-raises errors.
+
+#### Rethrow
+
+Inside a catch block, `throw` without arguments re-raises the caught error to outer handlers:
+
+```prose
+try:
+  try:
+    session "Inner operation"
+  catch:
+    session "Partial handling"
+    throw  # Re-raise to outer handler
+catch:
+  session "Handle re-raised error"
+```
+
+#### Throw with Message
+
+Throw a new error with a custom message:
+
+```prose
+session "Check preconditions"
+throw "Precondition not met"
+```
+
+### Nested Error Handling
+
+Try blocks can be nested. Inner catch blocks don't trigger outer handlers unless they rethrow:
+
+```prose
+try:
+  session "Outer operation"
+  try:
+    session "Inner risky operation"
+  catch:
+    session "Handle inner error"  # Outer catch won't run
+  session "Continue outer operation"
+catch:
+  session "Handle outer error only"
+```
+
+### Error Handling in Parallel
+
+Each parallel branch can have its own error handling:
+
+```prose
+parallel:
+  try:
+    session "Branch A might fail"
+  catch:
+    session "Recover branch A"
+  try:
+    session "Branch B might fail"
+  catch:
+    session "Recover branch B"
+
+session "Continue with recovered results"
+```
+
+This differs from the `on-fail:` policy which controls behavior when unhandled errors occur.
+
+### Retry Property
+
+The `retry:` property makes a session automatically retry on failure:
+
+```prose
+session "Call flaky API"
+  retry: 3
+```
+
+#### Retry with Backoff
+
+Add `backoff:` to control delay between retries:
+
+```prose
+session "Rate-limited API"
+  retry: 5
+  backoff: exponential
+```
+
+**Backoff Strategies:**
+
+| Strategy      | Behavior                           |
+| ------------- | ---------------------------------- |
+| `none`        | Immediate retry (default)          |
+| `linear`      | Fixed delay between retries        |
+| `exponential` | Doubling delay (1s, 2s, 4s, 8s...) |
+
+#### Retry with Context
+
+Retry works with other session properties:
+
+```prose
+let data = session "Get input"
+session "Process data"
+  context: data
+  retry: 3
+  backoff: linear
+```
+
+### Combining Patterns
+
+Retry and try/catch work together for maximum resilience:
+
+```prose
+try:
+  session "Call external service"
+    retry: 3
+    backoff: exponential
+catch:
+  session "All retries failed, use fallback"
+```
+
+### Validation Rules
+
+| Check                        | Severity | Message                                             |
+| ---------------------------- | -------- | --------------------------------------------------- |
+| Try without catch or finally | Error    | Try block must have at least "catch:" or "finally:" |
+| Error variable shadows outer | Warning  | Error variable shadows outer variable               |
+| Empty throw message          | Warning  | Throw message is empty                              |
+| Non-positive retry count     | Error    | Retry count must be positive                        |
+| Non-integer retry count      | Error    | Retry count must be an integer                      |
+| High retry count (>10)       | Warning  | Retry count is unusually high                       |
+| Invalid backoff strategy     | Error    | Must be none, linear, or exponential                |
+| Retry on agent definition    | Warning  | Retry property is only valid in session statements  |
+
+### Syntax Reference
+
+```
+try_block ::= "try" ":" NEWLINE INDENT statement+ DEDENT
+              [catch_block]
+              [finally_block]
+
+catch_block ::= "catch" ["as" identifier] ":" NEWLINE INDENT statement+ DEDENT
+
+finally_block ::= "finally" ":" NEWLINE INDENT statement+ DEDENT
+
+throw_statement ::= "throw" [string_literal]
+
+retry_property ::= "retry" ":" number_literal
+
+backoff_property ::= "backoff" ":" ( "none" | "linear" | "exponential" )
+```
+
+---
+
+## Choice Blocks
+
+Choice blocks allow the OpenProse VM to select from multiple labeled options based on criteria. This is useful for branching workflows where the best path depends on runtime analysis.
+
+### Syntax
+
+```prose
+choice **criteria**:
+  option "Label A":
+    statements...
+  option "Label B":
+    statements...
+```
+
+### Criteria
+
+The criteria is wrapped in discretion markers (`**...**`) and is evaluated by the OpenProse VM to select which option to execute:
+
+```prose
+choice **the best approach for the current situation**:
+  option "Quick fix":
+    session "Apply a quick temporary fix"
+  option "Full refactor":
+    session "Perform a complete code refactor"
+```
+
+### Multi-line Criteria
+
+For complex criteria, use triple-asterisks:
+
+```prose
+choice ***
+  which strategy is most appropriate
+  given the current project constraints
+  and timeline requirements
+***:
+  option "MVP approach":
+    session "Build minimum viable product"
+  option "Full feature set":
+    session "Build complete feature set"
+```
+
+### Examples
+
+#### Simple Choice
+
+```prose
+let analysis = session "Analyze the code quality"
+
+choice **the severity of issues found in the analysis**:
+  option "Critical":
+    session "Stop deployment and fix critical issues"
+      context: analysis
+  option "Minor":
+    session "Log issues for later and proceed"
+      context: analysis
+  option "None":
+    session "Proceed with deployment"
+```
+
+#### Choice with Multiple Statements per Option
+
+```prose
+choice **the user's experience level**:
+  option "Beginner":
+    session "Explain basic concepts first"
+    session "Provide step-by-step guidance"
+    session "Include helpful tips and warnings"
+  option "Expert":
+    session "Provide concise technical summary"
+    session "Include advanced configuration options"
+```
+
+#### Nested Choices
+
+```prose
+choice **the type of request**:
+  option "Bug report":
+    choice **the bug severity**:
+      option "Critical":
+        session "Escalate immediately"
+      option "Normal":
+        session "Add to sprint backlog"
+  option "Feature request":
+    session "Add to feature backlog"
+```
+
+### Execution Semantics
+
+When the OpenProse VM encounters a `choice` block:
+
+1. **Evaluate Criteria**: Interpret the discretion criteria in current context
+2. **Select Option**: Choose the most appropriate labeled option
+3. **Execute**: Run all statements in the selected option's body
+4. **Continue**: Proceed to the next statement after the choice block
+
+Only one option is executed per choice block.
+
+### Validation Rules
+
+| Check                   | Severity | Message                                    |
+| ----------------------- | -------- | ------------------------------------------ |
+| Choice without options  | Error    | Choice block must have at least one option |
+| Empty criteria          | Error    | Choice criteria cannot be empty            |
+| Duplicate option labels | Warning  | Duplicate option label                     |
+| Empty option body       | Warning  | Option has empty body                      |
+
+### Syntax Reference
+
+```
+choice_block ::= "choice" discretion ":" NEWLINE INDENT option+ DEDENT
+
+option ::= "option" string ":" NEWLINE INDENT statement+ DEDENT
+
+discretion ::= "**" text "**" | "***" text "***"
+```
+
+---
+
+## Conditional Statements
+
+If/elif/else statements provide conditional branching based on AI-evaluated conditions using discretion markers.
+
+### If Statement
+
+```prose
+if **condition**:
+  statements...
+```
+
+### If/Else
+
+```prose
+if **condition**:
+  statements...
+else:
+  statements...
+```
+
+### If/Elif/Else
+
+```prose
+if **first condition**:
+  statements...
+elif **second condition**:
+  statements...
+elif **third condition**:
+  statements...
+else:
+  statements...
+```
+
+### Discretion Conditions
+
+Conditions are wrapped in discretion markers (`**...**`) for AI evaluation:
+
+```prose
+let analysis = session "Analyze the codebase"
+
+if **the code has security vulnerabilities**:
+  session "Fix security issues immediately"
+    context: analysis
+elif **the code has performance issues**:
+  session "Optimize performance bottlenecks"
+    context: analysis
+else:
+  session "Proceed with normal review"
+    context: analysis
+```
+
+### Multi-line Conditions
+
+Use triple-asterisks for complex conditions:
+
+```prose
+if ***
+  the test suite passes
+  and the code coverage is above 80%
+  and there are no linting errors
+***:
+  session "Deploy to production"
+else:
+  session "Fix issues before deploying"
+```
+
+### Examples
+
+#### Simple If
+
+```prose
+session "Check system health"
+
+if **the system is healthy**:
+  session "Continue with normal operations"
+```
+
+#### If/Else
+
+```prose
+let review = session "Review the pull request"
+
+if **the code changes are safe and well-tested**:
+  session "Approve and merge the PR"
+    context: review
+else:
+  session "Request changes"
+    context: review
+```
+
+#### Multiple Elif
+
+```prose
+let status = session "Check project status"
+
+if **the project is on track**:
+  session "Continue as planned"
+elif **the project is slightly delayed**:
+  session "Adjust timeline and communicate"
+elif **the project is significantly delayed**:
+  session "Escalate to management"
+  session "Create recovery plan"
+else:
+  session "Assess project viability"
+```
+
+#### Nested Conditionals
+
+```prose
+if **the request is authenticated**:
+  if **the user has admin privileges**:
+    session "Process admin request"
+  else:
+    session "Process standard user request"
+else:
+  session "Return authentication error"
+```
+
+### Combining with Other Constructs
+
+#### With Try/Catch
+
+```prose
+try:
+  session "Attempt operation"
+  if **operation succeeded partially**:
+    session "Complete remaining steps"
+catch as err:
+  if **error is recoverable**:
+    session "Apply recovery procedure"
+      context: err
+  else:
+    throw "Unrecoverable error"
+```
+
+#### With Loops
+
+```prose
+loop until **task complete** (max: 10):
+  session "Work on task"
+  if **encountered blocker**:
+    session "Resolve blocker"
+```
+
+### Execution Semantics
+
+When the OpenProse VM encounters an `if` statement:
+
+1. **Evaluate Condition**: Interpret the first discretion condition
+2. **If True**: Execute the then-body and skip remaining clauses
+3. **If False**: Check each `elif` condition in order
+4. **Elif Match**: Execute that elif's body and skip remaining
+5. **No Match**: Execute the `else` body (if present)
+6. **Continue**: Proceed to the next statement
+
+### Validation Rules
+
+| Check           | Severity | Message                           |
+| --------------- | -------- | --------------------------------- |
+| Empty condition | Error    | If/elif condition cannot be empty |
+| Elif without if | Error    | Elif must follow if               |
+| Else without if | Error    | Else must follow if or elif       |
+| Multiple else   | Error    | Only one else clause allowed      |
+| Empty body      | Warning  | Condition has empty body          |
+
+### Syntax Reference
+
+```
+if_statement ::= "if" discretion ":" NEWLINE INDENT statement+ DEDENT
+                 elif_clause*
+                 [else_clause]
+
+elif_clause ::= "elif" discretion ":" NEWLINE INDENT statement+ DEDENT
+
+else_clause ::= "else" ":" NEWLINE INDENT statement+ DEDENT
+
+discretion ::= "**" text "**" | "***" text "***"
+```
+
+---
+
+## Execution Model
+
+OpenProse uses a two-phase execution model.
+
+### Phase 1: Compilation (Static)
+
+The compile phase handles deterministic preprocessing:
+
+1. **Parse**: Convert source code to AST
+2. **Validate**: Check for syntax and semantic errors
+3. **Expand**: Normalize syntax sugar (when implemented)
+4. **Output**: Generate canonical program
+
+### Phase 2: Runtime (Intelligent)
+
+The OpenProse VM executes the compiled program:
+
+1. **Load**: Receive the compiled program
+2. **Collect Agents**: Register all agent definitions
+3. **Execute**: Process each statement in order
+4. **Spawn**: Create subagents with resolved configurations
+5. **Coordinate**: Manage context passing between sessions
+
+### OpenProse VM Behavior
+
+| Aspect               | Behavior                                        |
+| -------------------- | ----------------------------------------------- |
+| Execution order      | Strict - follows program exactly                |
+| Session creation     | Strict - creates what program specifies         |
+| Agent resolution     | Strict - merge properties deterministically     |
+| Context passing      | Intelligent - summarizes/transforms as needed   |
+| Completion detection | Intelligent - determines when session is "done" |
+
+### State Management
+
+For the current implementation, state is tracked in-context (conversation history):
+
+| State Type          | Tracking Approach                                   |
+| ------------------- | --------------------------------------------------- |
+| Agent definitions   | Collected at program start                          |
+| Execution flow      | Implicit reasoning ("completed X, now executing Y") |
+| Session outputs     | Held in conversation history                        |
+| Position in program | Tracked by OpenProse VM                             |
+
+---
+
+## Validation Rules
+
+The validator checks programs for errors and warnings before execution.
+
+### Errors (Block Execution)
+
+| Code | Description                              |
+| ---- | ---------------------------------------- |
+| E001 | Unterminated string literal              |
+| E002 | Unknown escape sequence in string        |
+| E003 | Session missing prompt or agent          |
+| E004 | Unexpected token                         |
+| E005 | Invalid syntax                           |
+| E006 | Duplicate agent definition               |
+| E007 | Undefined agent reference                |
+| E008 | Invalid model value                      |
+| E009 | Duplicate property                       |
+| E010 | Duplicate use statement                  |
+| E011 | Empty use path                           |
+| E012 | Invalid use path format                  |
+| E013 | Skills must be an array                  |
+| E014 | Skill name must be a string              |
+| E015 | Permissions must be a block              |
+| E016 | Permission pattern must be a string      |
+| E017 | `resume:` requires persistent agent      |
+| E018 | `resume:` with no existing memory        |
+| E019 | Duplicate variable name (flat namespace) |
+| E020 | Empty input name                         |
+| E021 | Duplicate input declaration              |
+| E022 | Input after executable statement         |
+| E023 | Empty output name                        |
+| E024 | Duplicate output declaration             |
+| E025 | Unknown program in invocation            |
+| E026 | Missing required input                   |
+| E027 | Unknown input name in invocation         |
+| E028 | Unknown output property access           |
+
+### Warnings (Non-blocking)
+
+| Code | Description                                         |
+| ---- | --------------------------------------------------- |
+| W001 | Empty session prompt                                |
+| W002 | Whitespace-only session prompt                      |
+| W003 | Session prompt exceeds 10,000 characters            |
+| W004 | Empty prompt property                               |
+| W005 | Unknown property name                               |
+| W006 | Unknown import source format                        |
+| W007 | Skill not imported                                  |
+| W008 | Unknown permission type                             |
+| W009 | Unknown permission value                            |
+| W010 | Empty skills array                                  |
+| W011 | `session:` on persistent agent with existing memory |
+
+### Error Message Format
+
+Errors include location information:
+
+```
+Error at line 5, column 12: Unterminated string literal
+  session "Hello
+          ^
+```
+
+---
+
+## Examples
+
+### Minimal Program
+
+```prose
+session "Hello world"
+```
+
+### Research Pipeline with Agents
+
+```prose
+# Define specialized agents
+agent researcher:
+  model: sonnet
+  prompt: "You are a research assistant"
+
+agent writer:
+  model: opus
+  prompt: "You are a technical writer"
+
+# Execute workflow
+session: researcher
+  prompt: "Research recent developments in quantum computing"
+
+session: writer
+  prompt: "Write a summary of the research findings"
+```
+
+### Code Review Workflow
+
+```prose
+agent reviewer:
+  model: sonnet
+  prompt: "You are an expert code reviewer"
+
+session: reviewer
+  prompt: "Read the code in src/ and identify potential bugs"
+
+session: reviewer
+  prompt: "Suggest fixes for each bug found"
+
+session: reviewer
+  prompt: "Create a summary of all changes needed"
+```
+
+### Multi-step Task with Model Override
+
+```prose
+agent analyst:
+  model: haiku
+  prompt: "You analyze data quickly"
+
+# Quick initial analysis
+session: analyst
+  prompt: "Scan the data for obvious patterns"
+
+# Detailed analysis with more powerful model
+session: analyst
+  model: opus
+  prompt: "Perform deep analysis on the patterns found"
+```
+
+### Comments for Documentation
+
+```prose
+# Project: Quarterly Report Generator
+# Author: Team Lead
+# Date: 2024-01-01
+
+agent data-collector:
+  model: sonnet
+  prompt: "You gather and organize data"
+
+agent analyst:
+  model: opus
+  prompt: "You analyze data and create insights"
+
+# Step 1: Gather data
+session: data-collector
+  prompt: "Collect all sales data from the past quarter"
+
+# Step 2: Analysis
+session: analyst
+  prompt: "Perform trend analysis on the collected data"
+
+# Step 3: Report generation
+session: analyst
+  prompt: "Generate a formatted quarterly report with charts"
+```
+
+### Workflow with Skills and Permissions
+
+```prose
+# Import external programs
+use "@anthropic/web-search"
+use "@anthropic/file-writer" as file-writer
+
+# Define a secure research agent
+agent researcher:
+  model: sonnet
+  prompt: "You are a research assistant"
+  skills: ["web-search"]
+  permissions:
+    read: ["*.md", "*.txt"]
+    bash: deny
+
+# Define a writer agent
+agent writer:
+  model: opus
+  prompt: "You create documentation"
+  skills: ["file-writer"]
+  permissions:
+    write: ["docs/"]
+    bash: deny
+
+# Execute workflow
+session: researcher
+  prompt: "Research AI safety topics"
+
+session: writer
+  prompt: "Write a summary document"
+```
+
+---
+
+## Future Features
+
+All core features through Tier 12 have been implemented. Potential future enhancements:
+
+### Tier 13: Extended Features
+
+- Custom functions with return values
+- Module system for code organization
+- Type annotations for validation
+- Async/await patterns for advanced concurrency
+
+### Tier 14: Tooling
+
+- Language server protocol (LSP) support
+- VS Code extension
+- Interactive debugger
+- Performance profiling
+
+---
+
+## Syntax Grammar (Implemented)
+
+```
+program     → statement* EOF
+statement   → useStatement | inputDecl | agentDef | session | resumeStmt
+            | letBinding | constBinding | assignment | outputBinding
+            | parallelBlock | repeatBlock | forEachBlock | loopBlock
+            | tryBlock | choiceBlock | ifStatement | doBlock | blockDef
+            | throwStatement | comment
+
+# Program Composition
+useStatement → "use" string ( "as" IDENTIFIER )?
+inputDecl   → "input" IDENTIFIER ":" string
+outputBinding → "output" IDENTIFIER "=" expression
+programCall → IDENTIFIER "(" ( IDENTIFIER ":" expression )* ")"
+
+# Definitions
+agentDef    → "agent" IDENTIFIER ":" NEWLINE INDENT agentProperty* DEDENT
+agentProperty → "model:" ( "sonnet" | "opus" | "haiku" )
+              | "prompt:" string
+              | "persist:" ( "true" | "project" | string )
+              | "context:" ( IDENTIFIER | array | objectContext )
+              | "retry:" NUMBER
+              | "backoff:" ( "none" | "linear" | "exponential" )
+              | "skills:" "[" string* "]"
+              | "permissions:" NEWLINE INDENT permission* DEDENT
+blockDef    → "block" IDENTIFIER params? ":" NEWLINE INDENT statement* DEDENT
+params      → "(" IDENTIFIER ( "," IDENTIFIER )* ")"
+
+# Control Flow
+parallelBlock → "parallel" parallelMods? ":" NEWLINE INDENT parallelBranch* DEDENT
+parallelMods  → "(" ( joinStrategy | onFail | countMod ) ( "," ( joinStrategy | onFail | countMod ) )* ")"
+joinStrategy  → string                              # "all" | "first" | "any"
+onFail        → "on-fail" ":" string                # "fail-fast" | "continue" | "ignore"
+countMod      → "count" ":" NUMBER                  # only valid with "any"
+parallelBranch → ( IDENTIFIER "=" )? statement
+
+# Loops
+repeatBlock → "repeat" NUMBER ( "as" IDENTIFIER )? ":" NEWLINE INDENT statement* DEDENT
+forEachBlock → "parallel"? "for" IDENTIFIER ( "," IDENTIFIER )? "in" collection ":" NEWLINE INDENT statement* DEDENT
+loopBlock   → "loop" ( ( "until" | "while" ) discretion )? loopMods? ( "as" IDENTIFIER )? ":" NEWLINE INDENT statement* DEDENT
+loopMods    → "(" "max" ":" NUMBER ")"
+
+# Error Handling
+tryBlock    → "try" ":" NEWLINE INDENT statement+ DEDENT catchBlock? finallyBlock?
+catchBlock  → "catch" ( "as" IDENTIFIER )? ":" NEWLINE INDENT statement+ DEDENT
+finallyBlock → "finally" ":" NEWLINE INDENT statement+ DEDENT
+throwStatement → "throw" string?
+
+# Conditionals
+choiceBlock → "choice" discretion ":" NEWLINE INDENT choiceOption+ DEDENT
+choiceOption → "option" string ":" NEWLINE INDENT statement+ DEDENT
+ifStatement → "if" discretion ":" NEWLINE INDENT statement+ DEDENT elifClause* elseClause?
+elifClause  → "elif" discretion ":" NEWLINE INDENT statement+ DEDENT
+elseClause  → "else" ":" NEWLINE INDENT statement+ DEDENT
+
+# Composition
+doBlock     → "do" ( ":" NEWLINE INDENT statement* DEDENT | IDENTIFIER args? )
+args        → "(" expression ( "," expression )* ")"
+arrowExpr   → session ( "->" session )+
+
+# Sessions
+session     → "session" ( string | ":" IDENTIFIER | IDENTIFIER ":" IDENTIFIER )
+              ( NEWLINE INDENT sessionProperty* DEDENT )?
+resumeStmt  → "resume" ":" IDENTIFIER ( NEWLINE INDENT sessionProperty* DEDENT )?
+sessionProperty → "model:" ( "sonnet" | "opus" | "haiku" )
+                | "prompt:" string
+                | "context:" ( IDENTIFIER | array | objectContext )
+                | "retry:" NUMBER
+                | "backoff:" ( "none" | "linear" | "exponential" )
+
+# Bindings
+letBinding  → "let" IDENTIFIER "=" expression
+constBinding → "const" IDENTIFIER "=" expression
+assignment  → IDENTIFIER "=" expression
+
+# Expressions
+expression  → session | doBlock | parallelBlock | repeatBlock | forEachBlock
+            | loopBlock | arrowExpr | pipeExpr | programCall | string | IDENTIFIER | array | objectContext
+
+# Pipelines
+pipeExpr    → ( IDENTIFIER | array ) ( "|" pipeOp )+
+pipeOp      → ( "map" | "filter" | "pmap" ) ":" NEWLINE INDENT statement* DEDENT
+            | "reduce" "(" IDENTIFIER "," IDENTIFIER ")" ":" NEWLINE INDENT statement* DEDENT
+
+# Properties
+property    → ( "model" | "prompt" | "context" | "retry" | "backoff" | IDENTIFIER )
+            ":" ( IDENTIFIER | string | array | objectContext | NUMBER )
+
+# Primitives
+discretion  → "**" text "**" | "***" text "***"
+collection  → IDENTIFIER | array
+array       → "[" ( expression ( "," expression )* )? "]"
+objectContext → "{" ( IDENTIFIER ( "," IDENTIFIER )* )? "}"
+comment     → "#" text NEWLINE
+
+# Strings
+string      → singleString | tripleString | interpolatedString
+singleString → '"' character* '"'
+tripleString → '"""' ( character | NEWLINE )* '"""'
+interpolatedString → string containing "{" IDENTIFIER "}"
+character   → escape | non-quote
+escape      → "\\" | "\"" | "\n" | "\t"
+```
+
+---
+
+## Compiler API
+
+When a user invokes `/prose-compile` or asks you to compile a `.prose` file:
+
+1. **Read this document** (`compiler.md`) fully to understand all syntax and validation rules
+2. **Parse** the program according to the syntax grammar
+3. **Validate** syntax correctness, semantic validity, and self-evidence
+4. **Transform** to canonical form (expand syntax sugar, normalize structure)
+5. **Output** the compiled program or report errors/warnings with line numbers
+
+For direct interpretation without compilation, read `prose.md` and execute statements as described in the Session Statement section.
