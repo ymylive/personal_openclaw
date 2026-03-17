@@ -1,0 +1,6 @@
+{
+  "note": "Chunked for GitHub MCP sync limits",
+  "restore_with": "python deployment/restore_large_text_files.py",
+  "manifest": "deployment/mcp_large_text_manifest.json",
+  "original_path": "docs/.i18n/zh-CN.tm.jsonl"
+}
