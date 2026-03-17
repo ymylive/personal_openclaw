@@ -1,0 +1,1276 @@
+#!/usr/bin/env python3
+import argparse
+import contextlib
+import io
+import math
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+from dateutil import parser as date_parser
+from zoneinfo import ZoneInfo
+
+from finance_system.dashboard_access import build_daily_key, valid_until_for_date
+from finance_system.dashboard_contracts import build_access_delivery, build_index_payload
+from finance_system.dashboard_storage import DEFAULT_DATA_ROOT, list_history_dates, load_latest_bundle, write_stage_payload
+
+try:
+    import yfinance as yf
+except Exception:
+    yf = None
+
+TZ = ZoneInfo("Asia/Shanghai")
+UTC = timezone.utc
+BASE_DIR = Path(__file__).resolve().parent
+CONFIG_FILE = BASE_DIR / "portfolio_config.json"
+STATE_FILE = BASE_DIR / "portfolio_state.json"
+MARKET_CACHE_FILE = BASE_DIR / "market_cache.json"
+DASHBOARD_DATA_DIR = DEFAULT_DATA_ROOT
+USER_AGENT = "Mozilla/5.0 (compatible; OpenClawFinanceBot/1.1)"
+NEWS_LOOKBACK_HOURS = 24
+MAX_MORNING_NEWS_ITEMS = 6
+MAX_NOON_NEWS_ITEMS = 4
+MAX_ALLOCATION_PICKS = 2
+JIN10_FETCH_LIMIT = 80
+WEB_NEWS_FETCH_LIMIT = 18
+NEWS_SOURCE_CAP = 2
+OPENCLAW_FINANCE_NEWS_AGENT = "finance-news"
+OPENCLAW_FINANCE_NOON_AGENT = "finance-noon"
+OPENCLAW_SUMMARY_TIMEOUT_SECONDS = 180
+MARKET_CACHE_FRESH_HOURS = 24
+MARKET_CACHE_STALE_HOURS = 72
+EM_REQUEST_TIMEOUT = 20
+EM_PAGE_WORKERS = 8
+SINA_REQUEST_TIMEOUT = 20
+SINA_PAGE_WORKERS = 4
+SINA_HQ_BATCH_SIZE = 40
+NASDAQ_PAGE_SIZE = 1000
+MORNING_SHORTLIST_PER_MARKET = 12
+MORNING_FINAL_PICKS_PER_MARKET = 2
+MORNING_TOTAL_POSITION_LIMIT = 0.30
+MORNING_SINGLE_MARKET_LIMIT = 0.12
+MORNING_SINGLE_POSITION_LIMIT = 0.08
+EM_UT = "bd1d9ddb04089700cf9c27f6f7426281"
+EM_LIST_FIELDS = (
+    "f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f12,f13,f14,f15,f16,f17,f18,"
+    "f20,f21,f22,f23,f24,f25"
+)
+EM_INDEX_FIELDS = (
+    "f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f12,f13,f14,f15,f16,f17,f18,"
+    "f20,f21,f22,f23,f24,f25,f26,f33,f62,f115,f128,f136,f152"
+)
+EM_KLINE_FIELDS1 = "f1,f2,f3,f4,f5,f6,f7,f8"
+EM_KLINE_FIELDS2 = "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64"
+EM_A_SPOT_URL = "https://82.push2.eastmoney.com/api/qt/clist/get"
+EM_A_SPOT_FS = "m:0 t:6,m:0 t:80,m:1 t:2,m:1 t:23,m:0 t:81 s:2048"
+EM_A_INDEX_URL = "https://48.push2.eastmoney.com/api/qt/clist/get"
+EM_A_MAIN_INDEX_URL = "https://33.push2.eastmoney.com/api/qt/clist/get"
+EM_A_MAIN_INDEX_FS = "b:MK0010"
+EM_A_INDEX_FS = {
+    "main": EM_A_MAIN_INDEX_FS,
+    "sh": "m:1+t:1",
+    "sz": "m:0 t:5",
+    "component": "m:1+s:3,m:0+t:5",
+    "csi": "m:2",
+}
+EM_HK_SPOT_URL = "https://72.push2.eastmoney.com/api/qt/clist/get"
+EM_HK_SPOT_FS = "m:128 t:3,m:128 t:4,m:128 t:1,m:128 t:2"
+EM_HK_MAIN_SPOT_URL = "https://81.push2.eastmoney.com/api/qt/clist/get"
+EM_HK_MAIN_SPOT_FS = "m:128 t:3"
+EM_HK_INDEX_URL = "https://15.push2.eastmoney.com/api/qt/clist/get"
+EM_HK_INDEX_FS = "m:124,m:125,m:305"
+EM_US_SPOT_URL = "https://72.push2.eastmoney.com/api/qt/clist/get"
+EM_US_SPOT_FS = "m:105,m:106,m:107"
+EM_ETF_SPOT_URL = "https://88.push2.eastmoney.com/api/qt/clist/get"
+EM_ETF_SPOT_FS = "b:MK0021,b:MK0022,b:MK0023,b:MK0024,b:MK0827"
+EM_A_HIST_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+EM_HK_HIST_URL = "https://33.push2his.eastmoney.com/api/qt/stock/kline/get"
+EM_US_HIST_URL = "https://63.push2his.eastmoney.com/api/qt/stock/kline/get"
+SINA_A_COUNT_URL = "https://vip.stock.finance.sina.com.cn/quotes_service/api/openapi.php/Market_Center.getHQNodeStockCount"
+SINA_A_SPOT_URL = "https://vip.stock.finance.sina.com.cn/quotes_service/api/openapi.php/Market_Center.getHQNodeData"
+SINA_HK_COUNT_URL = "https://vip.stock.finance.sina.com.cn/quotes_service/api/openapi.php/Market_Center.getHKStockCount"
+SINA_HK_SPOT_URL = "https://vip.stock.finance.sina.com.cn/quotes_service/api/openapi.php/Market_Center.getHKStockData"
+SINA_HQ_URL = "https://hq.sinajs.cn/list="
+NASDAQ_STOCK_SCREENER_URL = "https://api.nasdaq.com/api/screener/stocks"
+A_SHARE_TURNOVER_MIN = 1e8
+A_SHARE_ETF_TURNOVER_MIN = 8e7
+HK_TURNOVER_MIN = 5e7
+US_TURNOVER_MIN = 2e8
+US_MARKET_CAP_MIN = 5e9
+A_SHARE_MARKET_CAP_MIN = 5e9
+HK_MARKET_CAP_MIN = 2e9
+MORNING_A_SHARE_NAME_BLOCKLIST = ("ST", "*ST", "退")
+MORNING_HK_NAME_BLOCKLIST = ("牛熊", "认购", "认沽", "界内证", "杠杆", "反向")
+MORNING_US_NAME_BLOCKLIST = ("WARRANT", "RIGHT", "UNIT", "CVR")
+NASDAQ_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json,text/plain,*/*",
+    "Origin": "https://www.nasdaq.com",
+    "Referer": "https://www.nasdaq.com/market-activity/stocks/screener",
+    "Connection": "close",
+}
+SINA_HEADERS = {"User-Agent": USER_AGENT, "Referer": "https://finance.sina.com.cn/"}
+A_ETF_WATCHLIST = ("sh510300", "sh510050", "sz159915", "sz159919", "sh513100", "sz159949", "sh513500", "sh518880")
+US_ETF_WATCHLIST = ("SPY", "QQQ", "DIA", "IWM", "TLT", "GLD", "SLV", "KWEB", "FXI", "HYG")
+HK_ETF_WATCHLIST = ("02800", "02828", "03033", "03088", "03067")
+OPENWEBSEARCH_QUERIES = [
+    "US stocks market news last 24 hours Reuters Bloomberg CNBC",
+    "Bitcoin crypto market news last 24 hours Reuters Bloomberg",
+    "Hong Kong stocks China A-shares gold silver market news last 24 hours",
+    "Federal Reserve yield inflation tariff market news last 24 hours Reuters FT Bloomberg",
+    "China stimulus yuan Hong Kong market news last 24 hours Reuters SCMP Bloomberg",
+    "Oil gold silver OPEC Middle East market news last 24 hours Reuters CNBC",
+]
+GOOGLE_NEWS_RSS_QUERIES = [
+    "US stocks OR S&P 500 OR Nasdaq when:1d",
+    "Federal Reserve OR Treasury yields OR CPI OR inflation when:1d",
+    "China stimulus OR yuan OR Hong Kong stocks OR A-shares when:1d",
+    "Bitcoin OR Ethereum OR crypto ETF when:1d",
+    "Gold OR silver OR oil OR OPEC when:1d",
+]
+DEFAULT_DASHBOARD_PUBLIC_BASE_URL = "https://cornna.qzz.io"
+PUBLISH_TIME_PATTERNS = [
+    re.compile(r"<meta[^>]+property=[\"']article:published_time[\"'][^>]+content=[\"']([^\"']+)", re.I),
+    re.compile(r"<meta[^>]+name=[\"']pubdate[\"'][^>]+content=[\"']([^\"']+)", re.I),
+    re.compile(r"<meta[^>]+name=[\"']publishdate[\"'][^>]+content=[\"']([^\"']+)", re.I),
+    re.compile(r"<meta[^>]+itemprop=[\"']datePublished[\"'][^>]+content=[\"']([^\"']+)", re.I),
+    re.compile(r"<meta[^>]+property=[\"']og:updated_time[\"'][^>]+content=[\"']([^\"']+)", re.I),
+    re.compile(r'"datePublished"\s*:\s*"([^"]+)"', re.I),
+    re.compile(r'"dateModified"\s*:\s*"([^"]+)"', re.I),
+    re.compile(r"<time[^>]+datetime=[\"']([^\"']+)", re.I),
+]
+LOW_SIGNAL_NEWS_PATTERNS = [
+    re.compile(r"(财经门户|金融信息服务商|全球金融行情资讯专家|提供专业的财经|各类财经资讯及数据)", re.I),
+    re.compile(r"^(东方财富网|新浪财经|英为财情(?:Investing\.com)?|Investing\.com|sina)\b", re.I),
+    re.compile(r"^Hong Kong stock market\s*-\s*South China Morning Post$", re.I),
+]
+MAJOR_NEWS_KEYWORDS = (
+    "fed", "fomc", "rate", "yield", "inflation", "cpi", "ppi", "jobs", "payroll", "treasury",
+    "tariff", "earnings", "guidance", "stimulus", "yuan", "hong kong", "a-share", "china",
+    "bitcoin", "btc", "ethereum", "eth", "crypto", "etf", "gold", "silver", "oil", "opec",
+    "safe haven", "美联储", "利率", "通胀", "非农", "就业", "收益率", "关税", "财报", "指引",
+    "刺激", "人民币", "港股", "a股", "美股", "比特币", "以太坊", "黄金", "白银", "原油", "避险", "监管", "政策",
+)
+MAJOR_NEWS_SOURCES = ("reuters", "bloomberg", "cnbc", "wsj", "ft", "jin10", "scmp")
+JIN10_LOW_SIGNAL_KEYWORDS = ("图示", "持仓报告", "行情播报", "报价更新", "技术分析")
+
+
+def now_cn() -> datetime:
+    return datetime.now(TZ)
+
+
+def load_json(path: Path, default):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
+
+
+def save_json(path: Path, data) -> None:
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def clean_text(text: str) -> str:
+    text = re.sub(r"<[^>]+>", "", text or "")
+    text = text.replace("\u3000", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def parse_json_from_text(raw: str):
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        pass
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end > start:
+        try:
+            return json.loads(raw[start : end + 1])
+        except Exception:
+            return None
+    return None
+
+
+def unwrap_openapi_payload(payload):
+    if isinstance(payload, dict):
+        result = payload.get("result")
+        if isinstance(result, dict) and "data" in result:
+            return result.get("data")
+    return payload
+
+
+def parse_datetime_candidate(value: str) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = date_parser.parse(value)
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(TZ)
+
+
+def within_lookback(published_at: Optional[datetime], lookback_hours: int = NEWS_LOOKBACK_HOURS) -> bool:
+    if published_at is None:
+        return False
+    delta = now_cn() - published_at
+    return timedelta(0) <= delta <= timedelta(hours=lookback_hours)
+
+
+def format_timestamp(value: Optional[str]) -> str:
+    if not value:
+        return "Unknown time"
+    parsed = parse_datetime_candidate(value)
+    if not parsed:
+        return value
+    return parsed.strftime("%m-%d %H:%M")
+
+
+def fetch_article_publish_time(url: str) -> Optional[str]:
+    try:
+        response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=15)
+        response.raise_for_status()
+        html = response.text
+    except Exception:
+        return None
+
+    for pattern in PUBLISH_TIME_PATTERNS:
+        match = pattern.search(html)
+        if not match:
+            continue
+        value = clean_text(match.group(1))
+        parsed = parse_datetime_candidate(value)
+        if parsed:
+            return parsed.isoformat()
+    return None
+
+def search_openweb(query: str, limit: int) -> List[dict]:
+    cmd = [
+        "mcporter",
+        "call",
+        "--output",
+        "json",
+        "--stdio",
+        "open-websearch",
+        "search",
+        f"query={query}",
+        f"limit:{limit}",
+    ]
+    env = os.environ.copy()
+    env.setdefault("MODE", "stdio")
+    env.setdefault("DEFAULT_SEARCH_ENGINE", "duckduckgo")
+    env.setdefault("LANG", "C.UTF-8")
+    env.setdefault("LC_ALL", "C.UTF-8")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.setdefault("PYTHONUTF8", "1")
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=90,
+            env=env,
+        )
+        data = parse_json_from_text(result.stdout)
+        if isinstance(data, dict) and isinstance(data.get("results"), list):
+            return data["results"]
+    except Exception:
+        pass
+    return []
+
+
+def fetch_openweb_news(limit: int = 6, lookback_hours: int = NEWS_LOOKBACK_HOURS) -> List[dict]:
+    items: List[dict] = []
+    seen_urls = set()
+    for query in OPENWEBSEARCH_QUERIES:
+        for item in search_openweb(query=query, limit=max(limit, 6)):
+            url = item.get("url", "")
+            if not url or url in seen_urls:
+                continue
+            published_at = item.get("publishedAt") or item.get("published_at") or item.get("date")
+            if not published_at:
+                published_at = fetch_article_publish_time(url)
+            published_dt = parse_datetime_candidate(published_at) if published_at else None
+            if not within_lookback(published_dt, lookback_hours):
+                continue
+            seen_urls.add(url)
+            items.append(
+                {
+                    "title": clean_text(item.get("title", "")),
+                    "url": url,
+                    "source": item.get("source", ""),
+                    "published_at": published_dt.isoformat(),
+                }
+            )
+            if len(items) >= limit:
+                return items
+    return items
+
+
+def fetch_google_news_rss(limit: int = 6, lookback_hours: int = NEWS_LOOKBACK_HOURS) -> List[dict]:
+    headers = {"User-Agent": USER_AGENT}
+    items: List[dict] = []
+    seen_urls = set()
+
+    for query in GOOGLE_NEWS_RSS_QUERIES:
+        try:
+            response = requests.get(
+                "https://news.google.com/rss/search",
+                params={"q": query, "hl": "en-US", "gl": "US", "ceid": "US:en"},
+                headers=headers,
+                timeout=20,
+            )
+            response.raise_for_status()
+            root = ET.fromstring(response.content)
+        except Exception:
+            continue
+
+        for rss_item in root.findall(".//item"):
+            title = clean_text(rss_item.findtext("title", default=""))
+            url = clean_text(rss_item.findtext("link", default=""))
+            published_at = clean_text(rss_item.findtext("pubDate", default=""))
+            source = clean_text(rss_item.findtext("source", default="Google News"))
+            if not title or not url or url in seen_urls:
+                continue
+            published_dt = parse_datetime_candidate(published_at)
+            if not within_lookback(published_dt, lookback_hours):
+                continue
+            seen_urls.add(url)
+            items.append(
+                {
+                    "title": re.sub(r"\s+-\s+[^-]+$", "", title).strip(),
+                    "url": url,
+                    "source": source or "Google News",
+                    "published_at": published_dt.isoformat(),
+                }
+            )
+            if len(items) >= limit:
+                return items
+    return items
+
+
+def fetch_jin10_news(limit: int = 6, lookback_hours: int = NEWS_LOOKBACK_HOURS) -> List[dict]:
+    headers = {"User-Agent": USER_AGENT}
+    items: List[dict] = []
+    seen_ids = set()
+    try:
+        response = requests.get("https://www.jin10.com/live/", headers=headers, timeout=25)
+        response.raise_for_status()
+        html = response.content.decode("utf-8", errors="replace")
+    except Exception:
+        return []
+
+    soup = BeautifulSoup(html, "html.parser")
+    for flash_item in soup.select("div.jin-flash-item.flash"):
+        detail_url = ""
+        for link in flash_item.select("a[href]"):
+            href = str(link.get("href", "")).strip()
+            if "/detail/" in href:
+                detail_url = href
+                break
+        match = re.search(r"/detail/(\d+)", detail_url)
+        if not match:
+            continue
+        news_id = match.group(1)
+        if news_id in seen_ids:
+            continue
+        seen_ids.add(news_id)
+        if len(news_id) < 14:
+            continue
+        try:
+            published_dt = datetime.strptime(news_id[:14], "%Y%m%d%H%M%S").replace(tzinfo=TZ)
+        except ValueError:
+            continue
+        if not within_lookback(published_dt, lookback_hours):
+            continue
+        text_node = flash_item.select_one(".flash-text, .right-content, .collapse-content")
+        title = clean_text(text_node.get_text(" ", strip=True) if text_node else "")
+        title = re.sub(r"^金十数据\s*\d+月\d+日(?:讯|电)[，,:：]?", "", title).strip()
+        title = re.sub(r"\s+", " ", title)
+        if not title:
+            continue
+        items.append(
+            {
+                "title": title,
+                "url": detail_url,
+                "source": "Jin10",
+                "published_at": published_dt.isoformat(),
+            }
+        )
+        if len(items) >= limit:
+            break
+    return items
+
+
+def fetch_web_news(limit: int = WEB_NEWS_FETCH_LIMIT, lookback_hours: int = NEWS_LOOKBACK_HOURS) -> List[dict]:
+    items = []
+    items.extend(fetch_google_news_rss(limit=limit, lookback_hours=lookback_hours))
+    items.extend(fetch_openweb_news(limit=limit, lookback_hours=lookback_hours))
+    return sort_and_dedupe_news(items, limit=limit)
+
+
+def extract_openclaw_text(payload: Any) -> str:
+    if isinstance(payload, str):
+        return payload.strip()
+    if isinstance(payload, list):
+        for item in payload:
+            text = extract_openclaw_text(item)
+            if text:
+                return text
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+
+    for key in ("output_text", "text", "message", "response", "content"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    for key in ("result", "data", "output", "assistant", "messages", "choices"):
+        value = payload.get(key)
+        text = extract_openclaw_text(value)
+        if text:
+            return text
+
+    for value in payload.values():
+        text = extract_openclaw_text(value)
+        if text:
+            return text
+    return ""
+
+
+def run_openclaw_finance_agent(
+    agent_name: str,
+    prompt: str,
+    timeout_seconds: int = OPENCLAW_SUMMARY_TIMEOUT_SECONDS,
+) -> dict:
+    binary = shutil.which("openclaw")
+    if not binary:
+        return {}
+
+    cmd = [
+        binary,
+        "agent",
+        "--local",
+        "--agent",
+        agent_name,
+        "--message",
+        prompt,
+        "--json",
+        "--timeout",
+        str(timeout_seconds),
+    ]
+    env = os.environ.copy()
+    env.setdefault("LANG", "C.UTF-8")
+    env.setdefault("LC_ALL", "C.UTF-8")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.setdefault("PYTHONUTF8", "1")
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=max(timeout_seconds + 30, 60),
+            env=env,
+        )
+    except Exception:
+        return {}
+
+    outer = parse_json_from_text(result.stdout) or parse_json_from_text(result.stderr or "")
+    if isinstance(outer, dict):
+        inner = parse_json_from_text(extract_openclaw_text(outer))
+        if isinstance(inner, dict):
+            return inner
+        return outer
+
+    inner = parse_json_from_text(result.stdout)
+    return inner if isinstance(inner, dict) else {}
+
+
+def build_news_summary_prompt(items: List[dict]) -> str:
+    rows = []
+    for index, item in enumerate(items, start=1):
+        rows.append(
+            f"{index}. [{normalize_news_source(item)}] {clean_text(str(item.get('title', '')))} | "
+            f"{format_timestamp(item.get('published_at'))} | {str(item.get('url', '')).strip()}"
+        )
+    schema = (
+        '{"headline":"",'
+        '"bullets":[""],'
+        '"risk_note":"",'
+        '"items":[{"index":1,"ai_summary":""}]}'
+    )
+    return (
+        "You are a professional cross-market financial analyst. "
+        "Use only the news items below from the last 24 hours. "
+        "Return strict JSON only, no markdown, no explanation, no code fences. "
+        f"Schema: {schema}. "
+        "Rules: Simplified Chinese, concise and neutral, headline <= 32 Chinese characters, "
+        "bullets max 3, risk_note optional, each item ai_summary <= 40 Chinese characters."
+        "\nNews:\n"
+        + "\n".join(rows)
+    )
+
+
+def summarize_news_with_openclaw(items: List[dict], limit: int = MAX_MORNING_NEWS_ITEMS) -> Tuple[List[dict], dict]:
+    selected = sort_and_dedupe_news(items, limit=limit)
+    if not selected:
+        return [], {}
+
+    payload = run_openclaw_finance_agent(
+        OPENCLAW_FINANCE_NEWS_AGENT,
+        build_news_summary_prompt(selected),
+    )
+    if not isinstance(payload, dict):
+        return selected, {}
+
+    item_summary_by_index: Dict[int, str] = {}
+    item_summary_by_title: Dict[str, str] = {}
+    for row in payload.get("items") or []:
+        if not isinstance(row, dict):
+            continue
+        summary = clean_text(str(row.get("ai_summary") or row.get("summary") or ""))
+        if not summary:
+            continue
+        index_value = safe_float(row.get("index"))
+        if index_value is not None:
+            item_summary_by_index[int(index_value)] = summary[:120]
+        title_key = clean_text(str(row.get("title") or "")).lower()
+        if title_key:
+            item_summary_by_title[title_key] = summary[:120]
+
+    annotated: List[dict] = []
+    for index, item in enumerate(selected, start=1):
+        title_key = clean_text(str(item.get("title", ""))).lower()
+        summary = item_summary_by_index.get(index) or item_summary_by_title.get(title_key)
+        annotated.append({**item, "ai_summary": summary} if summary else dict(item))
+
+    summary_payload = {
+        "mode": "openclaw",
+        "headline": clean_text(str(payload.get("headline") or payload.get("summary") or ""))[:120],
+        "bullets": [
+            clean_text(str(entry))
+            for entry in (payload.get("bullets") or payload.get("watch_points") or [])
+            if clean_text(str(entry))
+        ][:3],
+        "risk_note": clean_text(str(payload.get("risk_note") or payload.get("risk") or ""))[:160],
+    }
+    if not summary_payload["headline"] and not summary_payload["bullets"] and not summary_payload["risk_note"]:
+        summary_payload = {}
+    return annotated, summary_payload
+
+
+def build_noon_ai_summary(
+    config: dict,
+    analysis: dict,
+    allocations: dict,
+    market_status: Optional[dict],
+    recent_news: List[dict],
+) -> dict:
+    top_positions = []
+    for category in config.get("categories", []):
+        detail = allocations.get(category["key"], {})
+        for item in detail.get("picks", []):
+            top_positions.append(
+                f"{resolve_symbol_name(item.get('symbol', ''), item.get('name', ''))}"
+                f"({item.get('symbol', '')}) {format_pct(safe_float(item.get('portfolio_pct'), 0.0))}"
+            )
+    top_positions = top_positions[:5]
+    category_pnl = [
+        f"{resolve_category_name(key, config.get('categories'))} {format_signed_usd(amount)}"
+        for key, amount in sorted(
+            (analysis.get("category_pnl") or {}).items(),
+            key=lambda row: abs(row[1]),
+            reverse=True,
+        )[:4]
+    ]
+    news_rows = [
+        f"[{normalize_news_source(item)}] {clean_text(str(item.get('title', '')))}"
+        for item in recent_news[:4]
+    ]
+    market_rows = build_market_status_rows(market_status)[:6]
+    schema = (
+        '{"headline":"",'
+        '"bullets":[""],'
+        '"risk_note":"",'
+        '"advice":[""]}'
+    )
+    prompt = (
+        "You are a professional portfolio analyst for a cross-market simulated book. "
+        "Use only the context below. Return strict JSON only, no markdown, no extra commentary. "
+        f"Schema: {schema}. "
+        "Rules: Simplified Chinese, concise and neutral, bullets max 3, advice max 3. "
+        f"Portfolio value: {format_usd(analysis.get('portfolio_value', 0.0))}. "
+        f"Daily pnl: {format_signed_pct(analysis.get('daily_pnl_pct', 0.0))}. "
+        f"Turnover: {format_pct(analysis.get('turnover_pct', 0.0))}. "
+        "\nTop positions:\n"
+        + ("\n".join(f"- {row}" for row in top_positions) or "- none")
+        + "\nCategory pnl:\n"
+        + ("\n".join(f"- {row}" for row in category_pnl) or "- none")
+        + "\nMarket status:\n"
+        + ("\n".join(f"- {row}" for row in market_rows) or "- none")
+        + "\nRecent news:\n"
+        + ("\n".join(f"- {row}" for row in news_rows) or "- none")
+    )
+    payload = run_openclaw_finance_agent(OPENCLAW_FINANCE_NOON_AGENT, prompt)
+    if not isinstance(payload, dict):
+        return {}
+    summary = {
+        "mode": "openclaw",
+        "headline": clean_text(str(payload.get("headline") or payload.get("summary") or ""))[:120],
+        "bullets": [
+            clean_text(str(entry))
+            for entry in (payload.get("bullets") or [])
+            if clean_text(str(entry))
+        ][:3],
+        "risk_note": clean_text(str(payload.get("risk_note") or payload.get("risk") or ""))[:160],
+        "advice": [
+            clean_text(str(entry))
+            for entry in (payload.get("advice") or [])
+            if clean_text(str(entry))
+        ][:3],
+    }
+    if not summary["headline"] and not summary["bullets"] and not summary["risk_note"] and not summary["advice"]:
+        return {}
+    return summary
+
+
+def fetch_symbol_metrics(symbol: str) -> dict:
+    if yf is None:
+        raise RuntimeError("yfinance not installed")
+    ticker = yf.Ticker(symbol)
+    hist = ticker.history(period="6mo", interval="1d", auto_adjust=False)
+    if hist is None or hist.empty or len(hist) < 2 or "Close" not in hist:
+        raise RuntimeError(f"no history for {symbol}")
+    return compute_metrics_from_close(symbol, hist["Close"].dropna())
+
+
+def format_market_bar_at(value) -> str:
+    try:
+        ts = pd.Timestamp(value)
+    except Exception:
+        return ""
+    if ts.tzinfo is None:
+        ts = ts.tz_localize(UTC)
+    else:
+        ts = ts.tz_convert(UTC)
+    return ts.to_pydatetime().astimezone(TZ).isoformat()
+
+
+def compute_metrics_from_close(symbol: str, close: pd.Series) -> dict:
+    if len(close) < 2:
+        raise RuntimeError(f"insufficient close for {symbol}")
+
+    last = float(close.iloc[-1])
+    prev = float(close.iloc[-2])
+    ret_1d = (last / prev - 1.0) if prev else 0.0
+
+    ret_5d = 0.0
+    if len(close) >= 6:
+        base5 = float(close.iloc[-6])
+        ret_5d = (last / base5 - 1.0) if base5 else 0.0
+
+    ret_20d = 0.0
+    if len(close) >= 21:
+        base20 = float(close.iloc[-21])
+        ret_20d = (last / base20 - 1.0) if base20 else 0.0
+
+    ret_60d = 0.0
+    if len(close) >= 61:
+        base60 = float(close.iloc[-61])
+        ret_60d = (last / base60 - 1.0) if base60 else 0.0
+
+    daily = close.pct_change().dropna()
+    vol_20d = float(daily.tail(20).std() * (252 ** 0.5)) if len(daily) >= 5 else 0.0
+    score = 0.45 * ret_60d + 0.35 * ret_20d + 0.15 * ret_5d + 0.05 * ret_1d - 0.10 * vol_20d
+
+    return {
+        "symbol": symbol,
+        "price": last,
+        "ret_1d": ret_1d,
+        "ret_5d": ret_5d,
+        "ret_20d": ret_20d,
+        "ret_60d": ret_60d,
+        "vol_20d": vol_20d,
+        "score": score,
+        "bar_at": format_market_bar_at(close.index[-1]),
+    }
+
+
+def safe_float(value, default: float = 0.0) -> float:
+    if value in (None, "", "-", "--", "None", "null"):
+        return default
+    try:
+        cleaned = (
+            str(value)
+            .replace(",", "")
+            .replace("HK$", "")
+            .replace("$", "")
+            .replace("%", "")
+            .replace("¥", "")
+            .strip()
+        )
+        return float(cleaned)
+    except Exception:
+        return default
+
+
+def safe_int(value, default: int = 0) -> int:
+    try:
+        return int(safe_float(value, float(default)))
+    except Exception:
+        return default
+
+
+def normalize_market_cap_value(value) -> float:
+    market_cap = safe_float(value, 0.0)
+    if market_cap <= 0:
+        return 0.0
+    if market_cap < 1e8:
+        return market_cap * 10000.0
+    return market_cap
+
+
+def format_compact_amount(value: float, currency: str = "") -> str:
+    value = safe_float(value, 0.0)
+    abs_value = abs(value)
+    prefix = currency or ""
+    if abs_value >= 1e8:
+        return f"{prefix}{value / 1e8:.1f}亿"
+    if abs_value >= 1e4:
+        return f"{prefix}{value / 1e4:.1f}万"
+    if abs_value >= 1000:
+        return f"{prefix}{value:,.0f}"
+    return f"{prefix}{value:.0f}"
+
+
+def format_price_compact(value: float) -> str:
+    value = safe_float(value, 0.0)
+    abs_value = abs(value)
+    if abs_value >= 100:
+        return f"{value:.2f}"
+    if abs_value >= 10:
+        return f"{value:.2f}"
+    if abs_value >= 1:
+        return f"{value:.3f}"
+    return f"{value:.4f}"
+
+
+def format_pct_points(value: float) -> str:
+    return f"{safe_float(value, 0.0):+.2f}%"
+
+
+def normalize_em_diff_rows(raw_diff) -> List[dict]:
+    if isinstance(raw_diff, list):
+        return [item for item in raw_diff if isinstance(item, dict)]
+    if isinstance(raw_diff, dict):
+        items = []
+        for _, value in sorted(raw_diff.items(), key=lambda pair: safe_int(pair[0], 0)):
+            if isinstance(value, dict):
+                items.append(value)
+        return items
+    return []
+
+
+def build_em_query_params(fs: str, fields: str, fid: str = "f3") -> dict:
+    return {
+        "pn": "1",
+        "pz": "100",
+        "po": "1",
+        "np": "1",
+        "ut": EM_UT,
+        "fltt": "2",
+        "invt": "2",
+        "dect": "1",
+        "wbp2u": "|0|0|0|web",
+        "fid": fid,
+        "fs": fs,
+        "fields": fields,
+    }
+
+
+def request_json_with_retry(
+    url: str,
+    params: Optional[dict] = None,
+    headers: Optional[dict] = None,
+    timeout: int = EM_REQUEST_TIMEOUT,
+    attempts: int = 2,
+):
+    last_error = None
+    for _ in range(max(1, attempts)):
+        try:
+            response = requests.get(url, params=params, headers=headers or {"User-Agent": USER_AGENT}, timeout=timeout)
+            response.raise_for_status()
+            try:
+                payload = response.json()
+            except Exception:
+                payload = parse_json_from_text(response.text)
+            payload = unwrap_openapi_payload(payload)
+            if payload is None:
+                raise RuntimeError("invalid json payload")
+            return payload
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(f"{urlparse(url).netloc} request failed: {last_error}")
+
+
+def request_text_with_retry(
+    url: str,
+    params: Optional[dict] = None,
+    headers: Optional[dict] = None,
+    timeout: int = EM_REQUEST_TIMEOUT,
+    attempts: int = 2,
+) -> str:
+    last_error = None
+    for _ in range(max(1, attempts)):
+        try:
+            response = requests.get(url, params=params, headers=headers or {"User-Agent": USER_AGENT}, timeout=timeout)
+            response.raise_for_status()
+            return response.text
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(f"{urlparse(url).netloc} request failed: {last_error}")
+
+
+def merge_rows_by_symbol(*row_groups: List[dict]) -> List[dict]:
+    merged: Dict[str, dict] = {}
+    order: List[str] = []
+    for rows in row_groups:
+        for row in rows:
+            symbol = str(row.get("symbol", ""))
+            if not symbol:
+                continue
+            if symbol not in merged:
+                merged[symbol] = dict(row)
+                order.append(symbol)
+                continue
+            current = merged[symbol]
+            for key, value in row.items():
+                if key in {"symbol", "display_symbol", "code", "market", "market_label", "asset_type", "history_market"}:
+                    continue
+                if current.get(key) in (None, "", 0, 0.0, False) and value not in (None, "", 0, 0.0, False):
+                    current[key] = value
+    return [merged[symbol] for symbol in order]
+
+
+def em_request_json(url: str, params: dict) -> dict:
+    payload = request_json_with_retry(
+        url,
+        params=params,
+        headers={"User-Agent": USER_AGENT, "Referer": "https://quote.eastmoney.com/"},
+        timeout=EM_REQUEST_TIMEOUT,
+        attempts=2,
+    )
+    if not isinstance(payload, dict):
+        raise RuntimeError("non-dict response")
+    return payload
+
+
+def em_fetch_rows(url: str, params: dict, max_pages: Optional[int] = None) -> List[dict]:
+    first_payload = em_request_json(url, params)
+    data = (first_payload.get("data") or {}) if isinstance(first_payload, dict) else {}
+    rows = normalize_em_diff_rows(data.get("diff"))
+    total = safe_int(data.get("total"), len(rows))
+    page_size = max(1, safe_int(params.get("pz"), 100))
+    page_count = max(1, math.ceil(total / page_size)) if total else 1
+    if max_pages is not None:
+        page_count = min(page_count, max_pages)
+    if page_count <= 1:
+        return rows
+
+    paged_rows = {1: rows}
+
+    def fetch_page(page_no: int) -> Tuple[int, List[dict]]:
+        page_params = dict(params)
+        page_params["pn"] = str(page_no)
+        payload = em_request_json(url, page_params)
+        page_data = (payload.get("data") or {}) if isinstance(payload, dict) else {}
+        return page_no, normalize_em_diff_rows(page_data.get("diff"))
+
+    with ThreadPoolExecutor(max_workers=min(EM_PAGE_WORKERS, page_count - 1)) as executor:
+        futures = [executor.submit(fetch_page, page_no) for page_no in range(2, page_count + 1)]
+        for future in as_completed(futures):
+            page_no, page_rows = future.result()
+            paged_rows[page_no] = page_rows
+
+    combined: List[dict] = []
+    for page_no in sorted(paged_rows):
+        combined.extend(paged_rows[page_no])
+    return combined
+
+
+def normalize_a_symbol(code: str, market_id: int) -> str:
+    if market_id == 1:
+        return f"{code}.SH"
+    if code.startswith(("4", "8", "9")):
+        return f"{code}.BJ"
+    return f"{code}.SZ"
+
+
+def normalize_em_spot_row(row: dict, market: str, asset_type: str) -> Optional[dict]:
+    code = clean_text(str(row.get("f12", "")))
+    name = clean_text(str(row.get("f14", "")))
+    if not code or not name:
+        return None
+
+    price = safe_float(row.get("f2"), 0.0)
+    pct_chg = safe_float(row.get("f3"), 0.0)
+    market_id = safe_int(row.get("f13"), 0)
+
+    if market == "A":
+        code = code.zfill(6)
+        if market_id not in {0, 1}:
+            market_id = 1 if code.startswith(("5", "6", "9")) else 0
+        secid = f"{market_id}.{code}"
+        symbol = normalize_a_symbol(code, market_id)
+        display_symbol = code
+        market_label = "A股"
+        history_market = "ETF" if asset_type == "etf" else "A"
+    elif market == "HK":
+        code = code.zfill(5)
+        secid = f"116.{code}"
+        symbol = f"{code}.HK"
+        display_symbol = symbol
+        market_label = "港股"
+        history_market = "HK"
+    else:
+        symbol = code.upper()
+        secid = f"{market_id}.{symbol}" if market_id else symbol
+        display_symbol = symbol
+        market_label = "美股"
+        history_market = "US"
+
+    return {
+        "market": market,
+        "market_label": market_label,
+        "asset_type": asset_type,
+        "symbol": symbol,
+        "display_symbol": display_symbol,
+        "code": code,
+        "name": name,
+        "secid": secid,
+        "history_market": history_market,
+        "price": price,
+        "pct_chg": pct_chg,
+        "change": safe_float(row.get("f4"), 0.0),
+        "volume": safe_float(row.get("f5"), 0.0),
+        "amount": safe_float(row.get("f6"), 0.0),
+        "amplitude_pct": safe_float(row.get("f7"), 0.0),
+        "turnover_rate_pct": safe_float(row.get("f8"), 0.0),
+        "pe_ttm": safe_float(row.get("f9"), 0.0),
+        "volume_ratio": safe_float(row.get("f10"), 0.0),
+        "high": safe_float(row.get("f15"), 0.0),
+        "low": safe_float(row.get("f16"), 0.0),
+        "open": safe_float(row.get("f17"), 0.0),
+        "prev_close": safe_float(row.get("f18"), 0.0),
+        "market_cap": safe_float(row.get("f20"), 0.0),
+        "float_market_cap": safe_float(row.get("f21"), 0.0),
+        "speed_pct": safe_float(row.get("f22"), 0.0),
+        "pb": safe_float(row.get("f23"), 0.0),
+        "pct_60d": safe_float(row.get("f24"), 0.0),
+        "pct_ytd": safe_float(row.get("f25"), 0.0),
+    }
+
+
+def compute_amplitude_pct(high: float, low: float, prev_close: float) -> float:
+    if prev_close <= 0:
+        return 0.0
+    return max((high - low) / prev_close * 100.0, 0.0)
+
+
+def fetch_sina_hq_quote_map(codes: List[str]) -> Dict[str, List[str]]:
+    quote_map: Dict[str, List[str]] = {}
+    for start in range(0, len(codes), SINA_HQ_BATCH_SIZE):
+        chunk = codes[start : start + SINA_HQ_BATCH_SIZE]
+        raw = request_text_with_retry(
+            SINA_HQ_URL + ",".join(chunk),
+            headers=SINA_HEADERS,
+            timeout=SINA_REQUEST_TIMEOUT,
+            attempts=2,
+        )
+        for line in raw.splitlines():
+            match = re.match(r'var hq_str_(?P<code>[^=]+)="(?P<body>.*)";?$', line.strip())
+            if not match:
+                continue
+            body = match.group("body")
+            quote_map[match.group("code")] = body.split(",") if body else []
+    return quote_map
+
+
+def normalize_sina_a_spot_row(row: dict) -> Optional[dict]:
+    code = clean_text(str(row.get("code") or row.get("symbol") or ""))
+    name = clean_text(str(row.get("name") or ""))
+    if not code or not name:
+        return None
+    symbol_code = clean_text(str(row.get("symbol") or "")).lower()
+    market_id = 1 if symbol_code.startswith("sh") else 0
+    high = safe_float(row.get("high"), 0.0)
+    low = safe_float(row.get("low"), 0.0)
+    prev_close = safe_float(row.get("settlement"), 0.0)
+    return {
+        "market": "A",
+        "market_label": "A股",
+        "asset_type": "stock",
+        "symbol": normalize_a_symbol(code.zfill(6), market_id),
+        "display_symbol": code.zfill(6),
+        "code": code.zfill(6),
+        "name": name,
+        "secid": f"{market_id}.{code.zfill(6)}",
+        "history_market": "A",
+        "price": safe_float(row.get("trade"), 0.0),
+        "pct_chg": safe_float(row.get("changepercent"), 0.0),
+        "change": safe_float(row.get("pricechange"), 0.0),
+        "volume": safe_float(row.get("volume"), 0.0),
+        "amount": safe_float(row.get("amount"), 0.0),
+        "amplitude_pct": compute_amplitude_pct(high, low, prev_close),
+        "turnover_rate_pct": safe_float(row.get("turnoverratio"), 0.0),
+        "pe_ttm": safe_float(row.get("per"), 0.0),
+        "volume_ratio": 0.0,
+        "high": high,
+        "low": low,
+        "open": safe_float(row.get("open"), 0.0),
+        "prev_close": prev_close,
+        "market_cap": normalize_market_cap_value(row.get("mktcap")),
+        "float_market_cap": normalize_market_cap_value(row.get("nmc")),
+        "speed_pct": 0.0,
+        "pb": safe_float(row.get("pb"), 0.0),
+        "pct_60d": 0.0,
+        "pct_ytd": 0.0,
+    }
+
+
+def fetch_sina_a_share_spot_rows() -> List[dict]:
+    count = safe_int(
+        request_json_with_retry(
+            SINA_A_COUNT_URL,
+            params={"node": "hs_a"},
+            headers=SINA_HEADERS,
+            timeout=SINA_REQUEST_TIMEOUT,
+            attempts=2,
+        ),
+        0,
+    )
+    page_size = 100
+    page_count = max(1, math.ceil(count / page_size)) if count else 1
+    rows: List[dict] = []
+    for page_no in range(1, page_count + 1):
+        payload = request_json_with_retry(
+            SINA_A_SPOT_URL,
+            params={
+                "page": str(page_no),
+                "num": str(page_size),
+                "sort": "symbol",
+                "asc": "1",
+                "node": "hs_a",
+                "symbol": "",
+                "_s_r_a": "page",
+            },
+            headers=SINA_HEADERS,
+            timeout=SINA_REQUEST_TIMEOUT,
+            attempts=2,
+        )
+        page_rows = payload if isinstance(payload, list) else []
+        if not page_rows:
+            break
+        for raw_row in page_rows:
+            if not isinstance(raw_row, dict):
+                continue
+            item = normalize_sina_a_spot_row(raw_row)
+            if item is not None:
+                rows.append(item)
+        if len(page_rows) < page_size:
+            break
+    return rows
+
+
+def normalize_sina_a_etf_quote_row(prefixed_code: str, fields: List[str]) -> Optional[dict]:
+    if len(fields) < 10:
+        return None
+    code = prefixed_code[-6:]
+    price = safe_float(fields[3], 0.0)
+    name = clean_text(fields[0])
+    if price <= 0 or not name:
+        return None
+    high = safe_float(fields[4], 0.0)
+    low = safe_float(fields[5], 0.0)
+    prev_close = safe_float(fields[2], 0.0)
+    market_id = 1 if prefixed_code.startswith("sh") else 0
+    return {
+        "market": "A",
+        "market_label": "A股",
+        "asset_type": "etf",
+        "symbol": normalize_a_symbol(code, market_id),
+        "display_symbol": code,
+        "code": code,
+        "name": name,
+        "secid": f"{market_id}.{code}",
+        "history_market": "ETF",
+        "price": price,
+        "pct_chg": ((price - prev_close) / prev_close * 100.0) if prev_close > 0 else 0.0,
+        "change": price - prev_close if prev_close > 0 else 0.0,
+        "volume": safe_float(fields[8], 0.0),
+        "amount": safe_float(fields[9], 0.0),
+        "amplitude_pct": compute_amplitude_pct(high, low, prev_close),
+        "turnover_rate_pct": 0.0,
+        "pe_ttm": 0.0,
+        "volume_ratio": 0.0,
+        "high": high,
+        "low": low,
+        "open": safe_float(fields[1], 0.0),
+        "prev_close": prev_close,
+        "market_cap": 0.0,
+        "float_market_cap": 0.0,
+        "speed_pct": 0.0,
+        "pb": 0.0,
+        "pct_60d": 0.0,
+        "pct_ytd": 0.0,
+    }
+
+
+def fetch_a_etf_watchlist_rows() -> List[dict]:
+    quote_map = fetch_sina_hq_quote_map(list(A_ETF_WATCHLIST))
+    rows: List[dict] = []
+    for prefixed_code in A_ETF_WATCHLIST:
+        fields = quote_map.get(prefixed_code) or []
+        item = normalize_sina_a_etf_quote_row(prefixed_code, fields)
+        if item is not None:
+            rows.append(item)
+    return rows
+
+
+def normalize_sina_hk_spot_row(row: dict) -> Optional[dict]:
+    code = clean_text(str(row.get("symbol") or "")).zfill(5)
+    name = clean_text(str(row.get("name") or ""))
+    if not code or not name:
+        return None
+    high = safe_float(row.get("high"), 0.0)
+    low = safe_float(row.get("low"), 0.0)
+    prev_close = safe_float(row.get("prevclose"), 0.0)
+    return {
+        "market": "HK",
+        "market_label": "港股",
+        "asset_type": "stock",
+        "symbol": f"{code}.HK",
+        "display_symbol": f"{code}.HK",
+        "code": code,
+        "name": name,
+        "secid": f"116.{code}",
+        "history_market": "HK",
+        "price": safe_float(row.get("lasttrade"), 0.0),
+        "pct_chg": safe_float(row.get("changepercent"), 0.0),
+        "change": safe_float(row.get("pricechange"), 0.0),
+        "volume": safe_float(row.get("volume"), 0.0),
+        "amount": safe_float(row.get("amount"), 0.0),
+        "amplitude_pct": compute_amplitude_pct(high, low, prev_close),
+        "turnover_rate_pct": 0.0,
+        "pe_ttm": safe_float(row.get("pe_ratio"), 0.0),
+        "volume_ratio": 0.0,
+        "high": high,
+        "low": low,
+        "open": safe_float(row.get("open"), 0.0),
+        "prev_close": prev_close,
+        "market_cap": normalize_market_cap_value(row.get("market_value")),
+        "float_market_cap": normalize_market_cap_value(row.get("market_value")),
+        "speed_pct": 0.0,
+        "pb": 0.0,
+        "pct_60d": 0.0,
+        "pct_ytd": 0.0,
+    }
+
+
+def fetch_sina_hk_spot_rows() -> List[dict]:
+    page_size = 60
+    rows: List[dict] = []
+    page_no = 1
+    while True:
+        payload = request_json_with_retry(
+            SINA_HK_SPOT_URL,
+            params={
+                "page": str(page_no),
+                "num": str(page_size),
+                "sort": "symbol",
+                "asc": "1",
+                "node": "qbgg_hk",
+                "_s_r_a": "page",
+            },
+            headers=SINA_HEADERS,
+            timeout=SINA_REQUEST_TIMEOUT,
+            attempts=2,
+        )
+        page_rows = payload if isinstance(payload, list) else []
+        if not page_rows:
+            break
+        for raw_row in page_rows:
+            if not isinstance(raw_row, dict):
+                continue
+            item = normalize_sina_hk_spot_row(raw_row)
+            if item is not None:
+                rows.append(item)
+        if len(page_rows) < page_size:
+            break
+        page_no += 1
+    return rows
+
+
+def normalize_nasdaq_us_row(row: dict) -> Optional[dict]:
+    symbol = clean_text(str(row.get("symbol") or "")).upper()
+    name = clean_text(str(row.get("name") or ""))
+    if not symbol or not name:
+        return None
+    price = safe_float(row.get("lastsale"), 0.0)
+    change = safe_float(row.get("netchange"), 0.0)
+    volume = safe_float(row.get("volume"), 0.0)
+    return {
+        "market": "US",
+        "market_label": "美股",
+        "asset_type": "stock",
+        "symbol": symbol,
+        "display_symbol": symbol,
+        "code": symbol,
+        "name": name,
+        "secid": symbol,
+        "history_market": "US",
+        "price": price,
+        "pct_chg": safe_float(row.get("pctchange"), 0.0),
+        "change": change,
+        "volume": volume,
+        "amount": volume * price,
+        "amplitude_pct": 0.0,
+        "turnover_rate_pct": 0.0,
+        "pe_ttm": 0.0,
+        "volume_ratio": 0.0,
+        "high": 0.0,
+        "low": 0.0,
+        "open": 0.0,
+        "prev_close": price - change if price > 0 else 0.0,
+        "market_cap": normalize_market_cap_value(row.get("marketCap")),
+        "float_market_cap": 0.0,
+        "speed_pct": 0
