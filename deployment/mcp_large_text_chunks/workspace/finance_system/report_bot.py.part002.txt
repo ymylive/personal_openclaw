@@ -1,0 +1,1239 @@
+.0,
+        "pb": 0.0,
+        "pct_60d": 0.0,
+        "pct_ytd": 0.0,
+    }
+
+
+def fetch_nasdaq_us_stock_rows() -> List[dict]:
+    payload = request_json_with_retry(
+        NASDAQ_STOCK_SCREENER_URL,
+        params={"tableonly": "true", "download": "true"},
+        headers=NASDAQ_HEADERS,
+        timeout=EM_REQUEST_TIMEOUT,
+        attempts=2,
+    )
+    data = payload.get("data") if isinstance(payload, dict) else {}
+    raw_rows = data.get("rows") if isinstance(data, dict) else []
+    rows: List[dict] = []
+    for raw_row in raw_rows or []:
+        if not isinstance(raw_row, dict):
+            continue
+        item = normalize_nasdaq_us_row(raw_row)
+        if item is not None:
+            rows.append(item)
+    return rows
+
+
+def normalize_sina_hk_quote_row(code: str, fields: List[str]) -> Optional[dict]:
+    if len(fields) < 13:
+        return None
+    price = safe_float(fields[6], 0.0)
+    name = clean_text(fields[1] or fields[0])
+    if price <= 0 or not name:
+        return None
+    high = safe_float(fields[4], 0.0)
+    low = safe_float(fields[5], 0.0)
+    prev_close = safe_float(fields[3], 0.0)
+    symbol = f"{code}.HK"
+    return {
+        "market": "HK",
+        "market_label": "港股",
+        "asset_type": "etf",
+        "symbol": symbol,
+        "display_symbol": symbol,
+        "code": code,
+        "name": name,
+        "secid": f"116.{code}",
+        "history_market": "HK",
+        "price": price,
+        "pct_chg": safe_float(fields[8], 0.0),
+        "change": safe_float(fields[7], 0.0),
+        "volume": safe_float(fields[12], 0.0),
+        "amount": safe_float(fields[11], 0.0),
+        "amplitude_pct": compute_amplitude_pct(high, low, prev_close),
+        "turnover_rate_pct": 0.0,
+        "pe_ttm": 0.0,
+        "volume_ratio": 0.0,
+        "high": high,
+        "low": low,
+        "open": safe_float(fields[2], 0.0),
+        "prev_close": prev_close,
+        "market_cap": 0.0,
+        "float_market_cap": 0.0,
+        "speed_pct": 0.0,
+        "pb": 0.0,
+        "pct_60d": 0.0,
+        "pct_ytd": 0.0,
+    }
+
+
+def fetch_hk_etf_watchlist_rows() -> List[dict]:
+    codes = [f"rt_hk{code}" for code in HK_ETF_WATCHLIST]
+    quote_map = fetch_sina_hq_quote_map(codes)
+    rows: List[dict] = []
+    for prefixed_code in codes:
+        fields = quote_map.get(prefixed_code) or []
+        item = normalize_sina_hk_quote_row(prefixed_code.removeprefix("rt_hk"), fields)
+        if item is not None:
+            rows.append(item)
+    return rows
+
+
+def normalize_sina_us_etf_quote_row(symbol: str, fields: List[str]) -> Optional[dict]:
+    if len(fields) < 11:
+        return None
+    price = safe_float(fields[1], 0.0)
+    name = clean_text(fields[0])
+    if price <= 0 or not name:
+        return None
+    high = safe_float(fields[6], 0.0)
+    low = safe_float(fields[7], 0.0)
+    prev_close = safe_float(fields[26], price - safe_float(fields[4], 0.0)) if len(fields) > 26 else price - safe_float(fields[4], 0.0)
+    amount = safe_float(fields[33], 0.0) if len(fields) > 33 else 0.0
+    volume = safe_float(fields[10], 0.0)
+    return {
+        "market": "US",
+        "market_label": "美股",
+        "asset_type": "etf",
+        "symbol": symbol,
+        "display_symbol": symbol,
+        "code": symbol,
+        "name": name,
+        "secid": symbol,
+        "history_market": "US",
+        "price": price,
+        "pct_chg": safe_float(fields[2], 0.0),
+        "change": safe_float(fields[4], 0.0),
+        "volume": volume,
+        "amount": amount if amount > 0 else volume * price,
+        "amplitude_pct": compute_amplitude_pct(high, low, prev_close),
+        "turnover_rate_pct": 0.0,
+        "pe_ttm": 0.0,
+        "volume_ratio": 0.0,
+        "high": high,
+        "low": low,
+        "open": safe_float(fields[5], 0.0),
+        "prev_close": prev_close,
+        "market_cap": normalize_market_cap_value(fields[30] if len(fields) > 30 else 0.0),
+        "float_market_cap": 0.0,
+        "speed_pct": 0.0,
+        "pb": 0.0,
+        "pct_60d": 0.0,
+        "pct_ytd": 0.0,
+    }
+
+
+def fetch_us_etf_watchlist_rows() -> List[dict]:
+    codes = [f"gb_{symbol.lower()}" for symbol in US_ETF_WATCHLIST]
+    quote_map = fetch_sina_hq_quote_map(codes)
+    rows: List[dict] = []
+    for prefixed_code in codes:
+        fields = quote_map.get(prefixed_code) or []
+        item = normalize_sina_us_etf_quote_row(prefixed_code.removeprefix("gb_").upper(), fields)
+        if item is not None:
+            rows.append(item)
+    return rows
+
+
+def fetch_sina_a_index_rows() -> List[dict]:
+    code_map = {
+        "s_sh000001": ("000001", "上证指数"),
+        "s_sz399001": ("399001", "深证成指"),
+        "s_sz399006": ("399006", "创业板指"),
+    }
+    quote_map = fetch_sina_hq_quote_map(list(code_map))
+    rows: List[dict] = []
+    for prefixed_code, (code, default_name) in code_map.items():
+        fields = quote_map.get(prefixed_code) or []
+        if len(fields) < 4:
+            continue
+        rows.append(
+            {
+                "code": code,
+                "name": clean_text(fields[0] or default_name),
+                "price": safe_float(fields[1], 0.0),
+                "pct_chg": safe_float(fields[3], 0.0),
+                "change": safe_float(fields[2], 0.0),
+                "amount": 0.0,
+                "high": 0.0,
+                "low": 0.0,
+                "open": 0.0,
+                "prev_close": 0.0,
+                "market_id": 0,
+            }
+        )
+    return rows
+
+
+def fetch_sina_hk_index_rows() -> List[dict]:
+    code_map = {
+        "rt_hkHSI": ("HSI", "恒生指数"),
+        "rt_hkHSTECH": ("HSTECH", "恒生科技指数"),
+    }
+    quote_map = fetch_sina_hq_quote_map(list(code_map))
+    rows: List[dict] = []
+    for prefixed_code, (code, default_name) in code_map.items():
+        fields = quote_map.get(prefixed_code) or []
+        if len(fields) < 9:
+            continue
+        rows.append(
+            {
+                "code": code,
+                "name": clean_text(fields[1] or default_name),
+                "price": safe_float(fields[6], 0.0),
+                "pct_chg": safe_float(fields[8], 0.0),
+                "change": safe_float(fields[7], 0.0),
+                "amount": safe_float(fields[12], 0.0) if len(fields) > 12 else 0.0,
+                "high": safe_float(fields[4], 0.0),
+                "low": safe_float(fields[5], 0.0),
+                "open": safe_float(fields[2], 0.0),
+                "prev_close": safe_float(fields[3], 0.0),
+                "market_id": 0,
+            }
+        )
+    return rows
+
+
+def fetch_em_spot_rows(url: str, fs: str, market: str, asset_type: str) -> List[dict]:
+    params = build_em_query_params(fs=fs, fields=EM_LIST_FIELDS, fid="f3")
+    rows: List[dict] = []
+    for raw_row in em_fetch_rows(url, params):
+        item = normalize_em_spot_row(raw_row, market=market, asset_type=asset_type)
+        if item is not None:
+            rows.append(item)
+    return rows
+
+
+def fetch_a_share_spot_rows() -> List[dict]:
+    try:
+        rows = fetch_em_spot_rows(EM_A_SPOT_URL, EM_A_SPOT_FS, market="A", asset_type="stock")
+        if rows:
+            return rows
+    except Exception as exc:
+        primary_error = exc
+    else:
+        primary_error = None
+    fallback_rows = fetch_sina_a_share_spot_rows()
+    if fallback_rows:
+        return fallback_rows
+    if primary_error is not None:
+        raise RuntimeError(f"eastmoney failed and sina fallback empty: {primary_error}")
+    return fallback_rows
+
+
+def fetch_a_etf_spot_rows() -> List[dict]:
+    try:
+        rows = fetch_em_spot_rows(EM_ETF_SPOT_URL, EM_ETF_SPOT_FS, market="A", asset_type="etf")
+        if rows:
+            return merge_rows_by_symbol(rows, fetch_a_etf_watchlist_rows())
+    except Exception as exc:
+        primary_error = exc
+    else:
+        primary_error = None
+    fallback_rows = fetch_a_etf_watchlist_rows()
+    if fallback_rows:
+        return fallback_rows
+    if primary_error is not None:
+        raise RuntimeError(f"eastmoney failed and sina watchlist empty: {primary_error}")
+    return fallback_rows
+
+
+def fetch_hk_spot_rows() -> List[dict]:
+    try:
+        rows = fetch_em_spot_rows(EM_HK_SPOT_URL, EM_HK_SPOT_FS, market="HK", asset_type="stock")
+        if rows:
+            return merge_rows_by_symbol(rows, fetch_hk_etf_watchlist_rows())
+    except Exception as exc:
+        primary_error = exc
+    else:
+        primary_error = None
+    fallback_rows = fetch_sina_hk_spot_rows()
+    merged_rows = merge_rows_by_symbol(fallback_rows, fetch_hk_etf_watchlist_rows())
+    if merged_rows:
+        return merged_rows
+    if primary_error is not None:
+        raise RuntimeError(f"eastmoney failed and sina fallback empty: {primary_error}")
+    return merged_rows
+
+
+def fetch_us_spot_rows() -> List[dict]:
+    try:
+        rows = fetch_em_spot_rows(EM_US_SPOT_URL, EM_US_SPOT_FS, market="US", asset_type="stock")
+        if rows:
+            return merge_rows_by_symbol(rows, fetch_us_etf_watchlist_rows())
+    except Exception as exc:
+        primary_error = exc
+    else:
+        primary_error = None
+    fallback_rows = fetch_nasdaq_us_stock_rows()
+    merged_rows = merge_rows_by_symbol(fallback_rows, fetch_us_etf_watchlist_rows())
+    if merged_rows:
+        return merged_rows
+    if primary_error is not None:
+        raise RuntimeError(f"eastmoney failed and nasdaq fallback empty: {primary_error}")
+    return merged_rows
+
+
+def fetch_em_index_rows(url: str, fs: str, max_pages: Optional[int] = 1) -> List[dict]:
+    params = build_em_query_params(fs=fs, fields=EM_INDEX_FIELDS, fid="f3")
+    rows = []
+    for raw_row in em_fetch_rows(url, params, max_pages=max_pages):
+        code = clean_text(str(raw_row.get("f12", "")))
+        name = clean_text(str(raw_row.get("f14", "")))
+        if not code or not name:
+            continue
+        rows.append(
+            {
+                "code": code,
+                "name": name,
+                "price": safe_float(raw_row.get("f2"), 0.0),
+                "pct_chg": safe_float(raw_row.get("f3"), 0.0),
+                "change": safe_float(raw_row.get("f4"), 0.0),
+                "amount": safe_float(raw_row.get("f6"), 0.0),
+                "high": safe_float(raw_row.get("f15"), 0.0),
+                "low": safe_float(raw_row.get("f16"), 0.0),
+                "open": safe_float(raw_row.get("f17"), 0.0),
+                "prev_close": safe_float(raw_row.get("f18"), 0.0),
+                "market_id": safe_int(raw_row.get("f13"), 0),
+            }
+        )
+    return rows
+
+
+def fetch_a_index_rows() -> List[dict]:
+    try:
+        rows = fetch_em_index_rows(EM_A_MAIN_INDEX_URL, EM_A_INDEX_FS["main"], max_pages=1)
+        codes = {item["code"] for item in rows}
+        for key in ("sh", "sz", "component", "csi"):
+            for item in fetch_em_index_rows(EM_A_INDEX_URL, EM_A_INDEX_FS[key], max_pages=2):
+                if item["code"] in codes:
+                    continue
+                rows.append(item)
+                codes.add(item["code"])
+        if rows:
+            return rows
+    except Exception:
+        pass
+    return fetch_sina_a_index_rows()
+
+
+def fetch_hk_index_rows() -> List[dict]:
+    try:
+        rows = fetch_em_index_rows(EM_HK_INDEX_URL, EM_HK_INDEX_FS, max_pages=2)
+        if rows:
+            return rows
+    except Exception:
+        pass
+    return fetch_sina_hk_index_rows()
+
+
+def fetch_em_close_series(secid: str, market: str, limit: int = 120) -> pd.Series:
+    url = EM_A_HIST_URL
+    if market == "HK":
+        url = EM_HK_HIST_URL
+    elif market == "US":
+        url = EM_US_HIST_URL
+
+    candidate_secids = [secid]
+    if market == "ETF" and "." in secid:
+        suffix = secid.split(".", 1)[1]
+        for prefix in ("1", "0"):
+            alt_secid = f"{prefix}.{suffix}"
+            if alt_secid not in candidate_secids:
+                candidate_secids.append(alt_secid)
+
+    last_error = None
+    for candidate_secid in candidate_secids:
+        params = {
+            "secid": candidate_secid,
+            "ut": EM_UT,
+            "klt": "101",
+            "fqt": "0",
+            "lmt": str(limit),
+            "end": "20500101",
+            "fields1": EM_KLINE_FIELDS1,
+            "fields2": EM_KLINE_FIELDS2,
+        }
+        try:
+            payload = em_request_json(url, params)
+            data = (payload.get("data") or {}) if isinstance(payload, dict) else {}
+            klines = data.get("klines") or []
+            if not klines:
+                raise RuntimeError("empty klines")
+            pairs = []
+            for item in klines:
+                parts = str(item).split(",")
+                if len(parts) < 3:
+                    continue
+                bar_at = pd.to_datetime(parts[0], errors="coerce")
+                close = safe_float(parts[2], float("nan"))
+                if pd.isna(bar_at) or math.isnan(close):
+                    continue
+                pairs.append((bar_at, close))
+            if len(pairs) < 2:
+                raise RuntimeError("insufficient klines")
+            index = pd.DatetimeIndex([bar_at for bar_at, _ in pairs])
+            close = pd.Series([close for _, close in pairs], index=index)
+            return close
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(f"history failed for {secid}: {last_error}")
+
+
+def normalize_yf_symbol(symbol: str) -> str:
+    if symbol.endswith(".SH"):
+        return symbol[:-3] + ".SS"
+    return symbol
+
+
+def fetch_yf_history_frame(symbol: str, limit: int = 120) -> pd.DataFrame:
+    if yf is None:
+        raise RuntimeError("yfinance unavailable")
+    with contextlib.redirect_stderr(io.StringIO()):
+        history = yf.Ticker(normalize_yf_symbol(symbol)).history(period="1y", interval="1d", auto_adjust=False)
+    if history is None or history.empty:
+        raise RuntimeError(f"yfinance history empty for {symbol}")
+    frame = history[["Open", "High", "Low", "Close", "Volume"]].dropna(subset=["Close"])
+    if len(frame) < 2:
+        raise RuntimeError(f"yfinance history insufficient for {symbol}")
+    try:
+        frame.index = frame.index.tz_localize(None)
+    except Exception:
+        try:
+            frame.index = frame.index.tz_convert(None)
+        except Exception:
+            pass
+    return frame.tail(limit)
+
+
+def is_a_share_name_blocked(name: str) -> bool:
+    clean_name = clean_text(name)
+    upper_name = clean_name.upper()
+    if any(keyword in upper_name for keyword in MORNING_A_SHARE_NAME_BLOCKLIST):
+        return True
+    if clean_name.startswith(("N", "C")) and len(clean_name) <= 6:
+        return True
+    return False
+
+
+def is_hk_name_blocked(name: str) -> bool:
+    clean_name = clean_text(name)
+    return any(keyword in clean_name for keyword in MORNING_HK_NAME_BLOCKLIST)
+
+
+def is_us_name_blocked(symbol: str, name: str) -> bool:
+    target = f"{symbol} {name}".upper()
+    return any(keyword in target for keyword in MORNING_US_NAME_BLOCKLIST)
+
+
+def filter_morning_rows(rows: List[dict], market: str, liquidity_only: bool = True) -> List[dict]:
+    filtered: List[dict] = []
+    for row in rows:
+        if row.get("price", 0.0) <= 0 or not row.get("name"):
+            continue
+
+        cap = max(safe_float(row.get("market_cap"), 0.0), safe_float(row.get("float_market_cap"), 0.0))
+        amount = safe_float(row.get("amount"), 0.0)
+        if market == "A":
+            if row.get("asset_type") == "stock":
+                if is_a_share_name_blocked(str(row.get("name", ""))):
+                    continue
+                if liquidity_only and (amount < A_SHARE_TURNOVER_MIN or cap < A_SHARE_MARKET_CAP_MIN):
+                    continue
+            else:
+                if liquidity_only and amount < A_SHARE_ETF_TURNOVER_MIN:
+                    continue
+        elif market == "HK":
+            if is_hk_name_blocked(str(row.get("name", ""))):
+                continue
+            if liquidity_only and amount < HK_TURNOVER_MIN:
+                continue
+            if liquidity_only and cap > 0 and cap < HK_MARKET_CAP_MIN:
+                continue
+        elif market == "US":
+            if is_us_name_blocked(str(row.get("symbol", "")), str(row.get("name", ""))):
+                continue
+            if liquidity_only and amount < US_TURNOVER_MIN:
+                continue
+            if liquidity_only and cap > 0 and cap < US_MARKET_CAP_MIN:
+                continue
+        filtered.append(dict(row))
+    return filtered
+
+
+def compute_market_breadth(rows: List[dict]) -> dict:
+    total = len(rows)
+    up = sum(1 for row in rows if row.get("pct_chg", 0.0) > 0)
+    down = sum(1 for row in rows if row.get("pct_chg", 0.0) < 0)
+    flat = max(0, total - up - down)
+    return {"total": total, "up": up, "down": down, "flat": flat}
+
+
+def score_morning_universe(rows: List[dict]) -> List[dict]:
+    if not rows:
+        return []
+
+    frame = pd.DataFrame(rows)
+    amount_rank = frame["amount"].rank(method="average", pct=True)
+    pct_rank = frame["pct_chg"].rank(method="average", pct=True)
+    turnover_rank = (
+        frame["turnover_rate_pct"].rank(method="average", pct=True)
+        if frame["turnover_rate_pct"].notna().any()
+        else pd.Series([0.5] * len(frame))
+    )
+    cap_series = frame[["market_cap", "float_market_cap"]].max(axis=1)
+    cap_rank = cap_series.rank(method="average", pct=True)
+    score = pct_rank * 42 + amount_rank * 30 + turnover_rank * 18 + cap_rank * 10
+    if "speed_pct" in frame:
+        score += frame["speed_pct"].rank(method="average", pct=True) * 8
+
+    scored_rows: List[dict] = []
+    for index, row in frame.iterrows():
+        item = dict(row.to_dict())
+        item["base_score"] = float(score.iloc[index])
+        scored_rows.append(item)
+    return sorted(scored_rows, key=lambda item: item.get("base_score", -999.0), reverse=True)
+
+
+def shortlist_market_rows(rows: List[dict]) -> List[dict]:
+    return score_morning_universe(rows)[:MORNING_SHORTLIST_PER_MARKET]
+
+
+def score_final_morning_pick(row: dict) -> float:
+    history_score = safe_float(row.get("score"), 0.0) * 100.0
+    trend_bonus = max(safe_float(row.get("ret_20d"), 0.0), 0.0) * 80.0 + max(safe_float(row.get("ret_60d"), 0.0), 0.0) * 60.0
+    live_bonus = safe_float(row.get("pct_chg"), 0.0) * 1.6 + math.log10(max(safe_float(row.get("amount"), 1.0), 1.0)) * 4.0
+    live_bonus += max(safe_float(row.get("turnover_rate_pct"), 0.0), 0.0) * 0.35
+    if row.get("asset_type") == "etf":
+        live_bonus += 1.5
+    risk_penalty = safe_float(row.get("vol_20d"), 0.0) * 10.0 + max(safe_float(row.get("amplitude_pct"), 0.0) - 10.0, 0.0) * 0.25
+    return history_score + trend_bonus + live_bonus - risk_penalty
+
+
+def enrich_rows_with_history(rows: List[dict]) -> List[dict]:
+    if not rows:
+        return []
+
+    enriched: List[dict] = []
+
+    def load_history(item: dict) -> Tuple[dict, dict]:
+        history_frame: Optional[pd.DataFrame] = None
+        try:
+            close = fetch_em_close_series(item["secid"], item["history_market"])
+            history_source = "eastmoney"
+        except Exception:
+            history_frame = fetch_yf_history_frame(item["symbol"])
+            close = history_frame["Close"]
+            history_source = "yfinance"
+        metric = compute_metrics_from_close(item["symbol"], close)
+        updated_item = dict(item)
+        updated_item["history_source"] = history_source
+        if history_frame is not None:
+            latest = history_frame.iloc[-1]
+            previous = history_frame.iloc[-2]
+            updated_item["volume"] = max(safe_float(updated_item.get("volume"), 0.0), safe_float(latest.get("Volume"), 0.0))
+            updated_item["amount"] = max(
+                safe_float(updated_item.get("amount"), 0.0),
+                safe_float(latest.get("Volume"), 0.0) * safe_float(latest.get("Close"), 0.0),
+            )
+            if safe_float(updated_item.get("open"), 0.0) <= 0:
+                updated_item["open"] = safe_float(latest.get("Open"), 0.0)
+            if safe_float(updated_item.get("high"), 0.0) <= 0:
+                updated_item["high"] = safe_float(latest.get("High"), 0.0)
+            if safe_float(updated_item.get("low"), 0.0) <= 0:
+                updated_item["low"] = safe_float(latest.get("Low"), 0.0)
+            if safe_float(updated_item.get("prev_close"), 0.0) <= 0:
+                updated_item["prev_close"] = safe_float(previous.get("Close"), 0.0)
+            if safe_float(updated_item.get("price"), 0.0) <= 0:
+                updated_item["price"] = safe_float(latest.get("Close"), 0.0)
+            if safe_float(updated_item.get("amplitude_pct"), 0.0) <= 0:
+                updated_item["amplitude_pct"] = compute_amplitude_pct(
+                    safe_float(updated_item.get("high"), 0.0),
+                    safe_float(updated_item.get("low"), 0.0),
+                    safe_float(updated_item.get("prev_close"), 0.0),
+                )
+        return updated_item, metric
+
+    with ThreadPoolExecutor(max_workers=min(EM_PAGE_WORKERS, len(rows))) as executor:
+        future_map = {executor.submit(load_history, item): item for item in rows}
+        for future in as_completed(future_map):
+            item = dict(future_map[future])
+            try:
+                item, metric = future.result()
+                item.update(metric)
+                item["history_ok"] = True
+            except Exception as exc:
+                item["history_ok"] = False
+                item["history_error"] = str(exc)[:180]
+                item.setdefault("ret_1d", 0.0)
+                item.setdefault("ret_5d", 0.0)
+                item.setdefault("ret_20d", 0.0)
+                item.setdefault("ret_60d", 0.0)
+                item.setdefault("vol_20d", 0.0)
+                item.setdefault("score", 0.0)
+            item["final_score"] = score_final_morning_pick(item)
+            enriched.append(item)
+
+    return sorted(enriched, key=lambda item: item.get("final_score", -999.0), reverse=True)
+
+
+def choose_market_picks(rows: List[dict]) -> List[dict]:
+    return enrich_rows_with_history(shortlist_market_rows(rows))[:MORNING_FINAL_PICKS_PER_MARKET]
+
+
+def find_index_row(rows: List[dict], names: Tuple[str, ...] = (), codes: Tuple[str, ...] = ()) -> Optional[dict]:
+    for code in codes:
+        for row in rows:
+            if str(row.get("code", "")) == code:
+                return row
+    for name in names:
+        for row in rows:
+            row_name = str(row.get("name", ""))
+            if row_name == name or name in row_name:
+                return row
+    return None
+
+
+def classify_market_temperature(index_moves: List[float], breadth: dict) -> str:
+    avg_index_move = sum(index_moves) / len(index_moves) if index_moves else 0.0
+    total = max(1, safe_int(breadth.get("total"), 0))
+    breadth_bias = (safe_int(breadth.get("up"), 0) - safe_int(breadth.get("down"), 0)) / total
+    score = avg_index_move + breadth_bias * 5.0
+    if score >= 1.6:
+        return "偏强"
+    if score >= 0.4:
+        return "中性偏强"
+    if score > -0.4:
+        return "中性"
+    if score > -1.6:
+        return "偏弱"
+    return "谨慎"
+
+
+def should_force_market_refresh() -> bool:
+    return os.getenv("OPENCLAW_FORCE_MARKET_REFRESH", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def load_cached_metric(market_cache: dict, symbol: str, allow_stale: bool = False) -> Optional[dict]:
+    cached_metric = market_cache.get(symbol)
+    if not isinstance(cached_metric, dict):
+        return None
+
+    required_keys = {"price", "ret_1d", "ret_5d", "ret_20d", "ret_60d", "vol_20d", "score"}
+    if not required_keys.issubset(cached_metric.keys()):
+        return None
+
+    updated_at = parse_datetime_candidate(str(cached_metric.get("updated_at", "")))
+    if updated_at is None:
+        return None
+
+    age = now_cn() - updated_at
+    if age < timedelta(0):
+        return None
+
+    max_age = timedelta(hours=MARKET_CACHE_STALE_HOURS if allow_stale else MARKET_CACHE_FRESH_HOURS)
+    if age > max_age:
+        return None
+
+    return dict(cached_metric)
+
+
+def extract_metric_from_batch(batch_data, symbol: str) -> Optional[dict]:
+    if batch_data is None or batch_data.empty:
+        return None
+    try:
+        if isinstance(batch_data.columns, pd.MultiIndex):
+            if symbol not in batch_data.columns.get_level_values(0):
+                return None
+            close = batch_data[symbol]["Close"].dropna()
+        else:
+            close = batch_data["Close"].dropna()
+        if len(close) < 2:
+            return None
+        return compute_metrics_from_close(symbol, close)
+    except Exception:
+        return None
+
+
+def build_market_status_entry(symbol: str, metric: Optional[dict], source: str, error: str = "") -> dict:
+    metric = metric or {}
+    updated_at = str(metric.get("updated_at", "") or "")
+    updated_dt = parse_datetime_candidate(updated_at)
+    age_minutes = None
+    if updated_dt is not None:
+        age_minutes = max(0, int((now_cn() - updated_dt).total_seconds() // 60))
+    return {
+        "symbol": symbol,
+        "source": source,
+        "is_stale": source == "cache_stale",
+        "updated_at": updated_at,
+        "bar_at": str(metric.get("bar_at", "") or ""),
+        "age_minutes": age_minutes,
+        "error": error.strip()[:200],
+    }
+
+
+def build_market_status_rows(market_status: Optional[dict]) -> List[str]:
+    if not market_status:
+        return ["- 行情状态：本轮未记录。"]
+
+    rows = [
+        f"- 标的总数：{int(market_status.get('symbols_total', 0))}",
+        f"- 实时抓取：{int(market_status.get('live_count', 0))}",
+        f"- 缓存回退：{int(market_status.get('cache_count', 0))}",
+        f"- 过期缓存：{int(market_status.get('stale_count', 0))}",
+    ]
+    generated_at = str(market_status.get("generated_at", "") or "")
+    if generated_at:
+        rows.append(f"- 生成时间：{format_timestamp(generated_at)}")
+
+    stale_symbols = [
+        item["symbol"]
+        for item in market_status.get("symbols", [])
+        if isinstance(item, dict) and item.get("source") == "cache_stale"
+    ]
+    if stale_symbols:
+        rows.append(f"- 注意：{', '.join(stale_symbols[:6])} 使用过期缓存回退。")
+
+    failed_symbols = [
+        item["symbol"]
+        for item in market_status.get("symbols", [])
+        if isinstance(item, dict) and item.get("error")
+    ]
+    if failed_symbols:
+        rows.append(f"- 实时抓取失败后已回退：{', '.join(failed_symbols[:6])}")
+    return rows
+
+
+def fetch_market_snapshot(config: dict, prefer_live: bool = False) -> Tuple[Dict[str, List[dict]], Dict[str, dict], dict]:
+    category_metrics: Dict[str, List[dict]] = {}
+    symbol_metrics: Dict[str, dict] = {}
+    market_cache = load_json(MARKET_CACHE_FILE, {})
+    cache_changed = False
+    all_symbols: List[str] = []
+    for category in config.get("categories", []):
+        for item in category.get("symbols", []):
+            all_symbols.append(item["symbol"])
+
+    unique_symbols = list(dict.fromkeys(all_symbols))
+    stale_cache = {symbol: load_cached_metric(market_cache, symbol, allow_stale=True) for symbol in unique_symbols}
+    fresh_cache = {symbol: load_cached_metric(market_cache, symbol, allow_stale=False) for symbol in unique_symbols}
+    force_live = prefer_live or should_force_market_refresh()
+    market_status = {
+        "generated_at": now_cn().isoformat(),
+        "prefer_live": force_live,
+        "symbols_total": len(unique_symbols),
+        "live_count": 0,
+        "cache_count": 0,
+        "stale_count": 0,
+        "symbols": [],
+    }
+
+    for category in config.get("categories", []):
+        key = category["key"]
+        metrics = []
+        for item in category.get("symbols", []):
+            symbol = item["symbol"]
+            metric = None
+            source = ""
+            fetch_error = ""
+
+            should_try_live = force_live or fresh_cache.get(symbol) is None
+            if should_try_live:
+                try:
+                    metric = fetch_symbol_metrics(symbol)
+                    metric["updated_at"] = now_cn().isoformat()
+                    metric["data_source"] = "live_single"
+                    market_cache[symbol] = dict(metric)
+                    cache_changed = True
+                    source = "live_single"
+                    market_status["live_count"] += 1
+                except Exception as exc:
+                    fetch_error = str(exc)
+
+            if metric is None and fresh_cache.get(symbol) is not None:
+                metric = dict(fresh_cache[symbol])
+                metric.setdefault("data_source", "cache_fresh")
+                source = "cache_fresh"
+                market_status["cache_count"] += 1
+
+            if metric is None and stale_cache.get(symbol) is not None:
+                metric = dict(stale_cache[symbol])
+                metric.setdefault("data_source", "cache_stale")
+                source = "cache_stale"
+                market_status["cache_count"] += 1
+                market_status["stale_count"] += 1
+
+            if metric is None:
+                market_status["symbols"].append(build_market_status_entry(symbol, None, "missing", fetch_error))
+                continue
+
+            metric["name"] = item.get("name", symbol)
+            metric["category"] = key
+            metrics.append(metric)
+            symbol_metrics[symbol] = metric
+            market_status["symbols"].append(
+                build_market_status_entry(symbol, metric, source or str(metric.get("data_source", "") or "unknown"), fetch_error)
+            )
+
+        category_metrics[key] = metrics
+
+    if cache_changed:
+        save_json(MARKET_CACHE_FILE, market_cache)
+    return category_metrics, symbol_metrics, market_status
+
+
+def calc_target_weights(category_metrics: Dict[str, List[dict]], config: dict) -> dict:
+    desired = {}
+    for category in config.get("categories", []):
+        key = category["key"]
+        picks = sorted(category_metrics.get(key, []), key=lambda row: row.get("score", -999), reverse=True)
+        picks = picks[: max(1, min(3, len(picks)))]
+        if not picks:
+            desired[key] = []
+            continue
+
+        positive_scores = [max(item["score"], 0.0) for item in picks]
+        if sum(positive_scores) <= 0:
+            fallback = [0.50, 0.30, 0.20][: len(picks)]
+            total = sum(fallback)
+            weights = [value / total for value in fallback]
+        else:
+            total = sum(positive_scores)
+            weights = [value / total for value in positive_scores]
+
+        desired[key] = [
+            {
+                "symbol": item["symbol"],
+                "name": item.get("name", item["symbol"]),
+                "category_weight": weight,
+                "score": item["score"],
+            }
+            for item, weight in zip(picks, weights)
+        ]
+    return desired
+
+
+def normalize_weight_map(weight_map: Dict[str, float]) -> Dict[str, float]:
+    cleaned = {symbol: max(0.0, float(weight)) for symbol, weight in weight_map.items() if float(weight) > 0}
+    total = sum(cleaned.values())
+    if total <= 0:
+        return {}
+    return {symbol: weight / total for symbol, weight in cleaned.items()}
+
+
+def mark_to_market(previous_positions: dict, symbol_metrics: Dict[str, dict], initial_capital: float) -> dict:
+    if not previous_positions:
+        return {
+            "previous_value": initial_capital,
+            "portfolio_value": initial_capital,
+            "positions": {},
+            "category_pnl": {},
+            "contributors": [],
+        }
+
+    current_value = 0.0
+    category_pnl: Dict[str, float] = {}
+    contributors = []
+    positions = {}
+
+    for symbol, position in previous_positions.items():
+        old_amount = float(position.get("amount_usd", 0.0))
+        ret_1d = float(symbol_metrics.get(symbol, {}).get("ret_1d", 0.0))
+        current_amount = old_amount * (1.0 + ret_1d)
+        pnl_amount = current_amount - old_amount
+        current_value += current_amount
+        category = position.get("category", "unknown")
+        category_pnl[category] = category_pnl.get(category, 0.0) + pnl_amount
+        positions[symbol] = {
+            **position,
+            "current_amount": current_amount,
+            "pnl_amount": pnl_amount,
+            "ret_1d": ret_1d,
+        }
+        contributors.append(
+            {
+                "symbol": symbol,
+                "name": symbol_metrics.get(symbol, {}).get("name", symbol),
+                "category": category,
+                "pnl_amount": pnl_amount,
+                "ret_1d": ret_1d,
+            }
+        )
+
+    portfolio_value = current_value if current_value > 0 else initial_capital
+    return {
+        "previous_value": float(sum(float(position.get("amount_usd", 0.0)) for position in previous_positions.values())),
+        "portfolio_value": portfolio_value,
+        "positions": positions,
+        "category_pnl": category_pnl,
+        "contributors": contributors,
+    }
+
+
+def smooth_category_amounts(config: dict, portfolio_value: float, previous_positions: dict) -> Dict[str, float]:
+    strategic = {}
+    current = {}
+    for category in config.get("categories", []):
+        key = category["key"]
+        strategic[key] = portfolio_value * float(category.get("allocation_pct", 0.0)) / 100.0
+        current[key] = 0.0
+    for position in previous_positions.values():
+        category = position.get("category")
+        if category in current:
+            current[category] += float(position.get("current_amount", position.get("amount_usd", 0.0)))
+
+    if not previous_positions:
+        return strategic
+
+    alpha = float(config.get("category_rebalance_alpha", 0.12))
+    smoothed = {}
+    for key, target_amount in strategic.items():
+        current_amount = current.get(key, target_amount)
+        smoothed[key] = current_amount + alpha * (target_amount - current_amount)
+
+    total = sum(smoothed.values())
+    if total <= 0:
+        return strategic
+    scale = portfolio_value / total
+    return {key: value * scale for key, value in smoothed.items()}
+
+
+def smooth_symbol_weights(
+    current_weights: Dict[str, float],
+    desired_weights: Dict[str, float],
+    symbol_metrics: Dict[str, dict],
+    alpha: float,
+    max_step: float,
+    drop_threshold: float,
+) -> Dict[str, float]:
+    if not current_weights:
+        return normalize_weight_map(desired_weights)
+
+    symbols = sorted(set(current_weights) | set(desired_weights))
+    smoothed = {}
+    for symbol in symbols:
+        current = float(current_weights.get(symbol, 0.0))
+        desired = float(desired_weights.get(symbol, 0.0))
+        if symbol not in symbol_metrics and symbol in current_weights and desired == 0:
+            desired = current
+        target = current + alpha * (desired - current)
+        delta = target - current
+        if delta > max_step:
+            target = current + max_step
+        elif delta < -max_step:
+            target = current - max_step
+        if desired == 0 and target < drop_threshold:
+            continue
+        if target > 0:
+            smoothed[symbol] = target
+
+    if not smoothed:
+        smoothed = current_weights or desired_weights
+    return normalize_weight_map(smoothed)
+
+
+def update_portfolio_state(config: dict, symbol_metrics: Dict[str, dict], target_weights: dict) -> dict:
+    state = load_json(STATE_FILE, {})
+    initial_capital = float(config.get("initial_capital", 1_000_000))
+    previous_positions = state.get("positions", {})
+    marked = mark_to_market(previous_positions, symbol_metrics, initial_capital)
+    portfolio_value = marked["portfolio_value"]
+    previous_value = float(state.get("portfolio_value", initial_capital))
+    if previous_value <= 0:
+        previous_value = initial_capital
+
+    category_amounts = smooth_category_amounts(config, portfolio_value, marked["positions"])
+    symbol_alpha = float(config.get("rebalance_alpha", 0.18))
+    max_step = float(config.get("max_daily_weight_shift_pct", 0.08))
+    drop_threshold = float(config.get("drop_threshold_pct", 0.04))
+
+    new_positions = {}
+    allocations = {}
+
+    for category in config.get("categories", []):
+        key = category["key"]
+        cat_amount = float(category_amounts.get(key, 0.0))
+        desired_map = {
+            item["symbol"]: float(item["category_weight"])
+            for item in target_weights.get(key, [])
+        }
+        desired_map = normalize_weight_map(desired_map)
+
+        current_amounts = {}
+        for symbol, position in marked["positions"].items():
+            if position.get("category") == key:
+                current_amounts[symbol] = float(position.get("current_amount", 0.0))
+        current_weight_total = sum(current_amounts.values())
+        current_weights = {}
+        if current_weight_total > 0:
+            current_weights = {
+                symbol: amount / current_weight_total
+                for symbol, amount in current_amounts.items()
+                if amount > 0
+            }
+
+        final_weights = smooth_symbol_weights(
+            current_weights=current_weights,
+            desired_weights=desired_map,
+            symbol_metrics=symbol_metrics,
+            alpha=symbol_alpha,
+            max_step=max_step,
+            drop_threshold=drop_threshold,
+        )
+
+        allocations[key] = {
+            "category_pct": cat_amount / portfolio_value if portfolio_value else 0.0,
+            "category_amount": cat_amount,
+            "picks": [],
+        }
+
+        for symbol, weight in final_weights.items():
+            amount = cat_amount * weight
+            portfolio_pct = amount / portfolio_value if portfolio_value else 0.0
+            metric_name = symbol_metrics.get(symbol, {}).get("name", symbol)
+            new_positions[symbol] = {
+                "category": key,
+                "amount_usd": amount,
+                "category_pct": weight,
+                "portfolio_pct": portfolio_pct,
+                "updated_at": now_cn().isoformat(),
+            }
+            allocations[key]["picks"].append(
+                {
+                    "symbol": symbol,
+                    "name": metric_name,
+                    "amount_usd": amount,
+                    "category_pct": weight,
+                    "portfolio_pct": portfolio_pct,
+                }
+            )
+
+    current_amount_lookup = {
+        symbol: float(position.get("current_amount", 0.0))
+        for symbol, position in marked["positions"].items()
+    }
+    target_amount_lookup = {
+        symbol: float(position.get("amount_usd", 0.0))
+        for symbol, position in new_positions.items()
+    }
+    union_symbols = set(current_amount_lookup) | set(target_amount_lookup)
+    turnover_amount = 0.5 * sum(
+        abs(target_amount_lookup.get(symbol, 0.0) - current_amount_lookup.get(symbol, 0.0))
+        for symbol in union_symbols
+    )
+    turnover_pct = turnover_amount / portfolio_value if portfolio_value else 0.0
+
+    daily_pnl_amount = portfolio_value - previous_value
+    daily_pnl_pct = daily_pnl_amount / previous_value if previous_value else 0.0
+    contributors = sorted(marked["contributors"], key=lambda row: row["pnl_amount"], reverse=True)
+
+    analysis = {
+        "previous_portfolio_value": previous_value,
+        "portfolio_value": portfolio_value,
+        "daily_pnl_amount": daily_pnl_amount,
+        "daily_pnl_pct": daily_pnl_pct,
+        "turnover_amount": turnover_amount,
+        "turnover_pct": turnover_pct,
+        "category_pnl": marked["category_pnl"],
+        "top_contributors": contributors[:3],
+        "top_detractors": sorted(marked["contributors"], key=lambda row: row["pnl_amount"])[:3],
+    }
+
+    state = {
+        "updated_at": now_cn().isoformat(),
+        "portfolio_value": portfolio_value,
+        "positions": new_positions,
+        "analysis": analysis,
+    }
+    save_json(STATE_FILE, state)
+    return {"state": state, "allocations": allocations, "analysis": analysis}
+
+
+def format_pct(value: float) -> str:
+    return f"{value * 100:.2f}%"
+
+
+def format_signed_pct(value: float) -> str:
+    return f"{value * 100:+.2f}%"
+
+
+def format_usd(value: float) -> str:
+    return f"${value:,.2f}"
+
+
+def format_signed_usd(value: float) -> str:
+    if value >= 0:
+        return f"+${value:,.2f}"
+    return f"-${abs(value):,.2f}"
+
+
+TELEGRAM_TEXT_LIMIT = 3500
+NEWS_SECTION_LIMIT = 4
+NOON_NEWS_WATCH_LIMIT = 3
+MORNING_HEALTH_MIN_CANDIDATES = {
+    "A": 500,
+    "HK": 120,
+    "US": 150,
+}
+MORNING_HEALTH_CRITICAL_MIN_CANDIDATES = {
+    "A": 50,
+    "HK": 20,
+    "US": 20,
+}
+MORNING_HEALTH_CRITICAL_MIN_BREADTH = {
+    "A": 200,
+    "HK": 80,
+    "US": 80,
+}
+MORNING_HEALTH_CRITICAL_SOURCE_KEYS = {"a_stocks", "hk_spot", "us_spot"}
+CATEGORY_NAME_FALLBACKS = {
+    "us_equities": "US Equities",
+    "btc_market": "Crypto",
+    "hk_equities": "HK Equities",
+    "a_equities": "A-Shares",
+    "precious_metals": "Precious Metals",
+}
+SYMBOL_NAME_FALLBACKS = {
+    "QQQ": "Nasdaq 100 ETF",
+    "NVDA": "NVIDIA",
+    "AAPL": "Apple",
+    "MSFT": "Microsoft",
+    "BTC-USD": "Bitcoin",
+    "ETH-USD": "Ethereum",
+    "SOL-USD": "Solana",
+    "0700.HK": "Tencent",
+    "9988.HK": "Alibaba",
+    "3690.HK": "Meituan",
+    "2800.HK": "Hang Seng ETF",
+    "600519.SS": "Kweichow Moutai",
+    "000001.SZ": "Ping An Bank",
+    "300750.SZ": "CATL",
+    "510300.SS": "CSI 300 ETF",
+    "GC=F": "COMEX Gold",
+    "SI=F": "COMEX Silver",
+    "GLD": "Gold ETF",
+    "SLV": "Silver ETF",
+}
+
+
+def has_meaningful_label(value: str) -> bool:
+    text = clean_text(value or "")
+    stripped = text.replace("?", "").strip(" -_/|")
+    return bool(stripped)
+
+
+def resolve_category_name(category_or_key, categories: Optional[List[dict]] = None) -> str:
+    if isinstance(category_or_key, dict):
+        key = str(category_or_key.get("key", "")).strip()
+        raw_name = str(category_or_key.get("name", "")).strip()
+    else:
+        key = str(category_or_key).strip()
+        raw_name = ""
+        for category in categories or []:
+            if category.get("key") == key:
+                raw_name = str(category.get("name", "")).strip()
+                break
+    if has_meaningful_label(raw_name):
+        return raw_name
+    return CATEGORY_NAME_FALLBACKS.get(key, key or "Unknown category")
+
+
+def resolve_symbol_name(symbol: str, raw_name: str = "") -> str:
+    raw = str(raw_name or "").strip()
+    if has_meaningful_label(raw):
+        return raw
+    return SYMBOL_NAME_FALLBACKS.get(symbol, symbol)
+
+
+def normalize_news_source(item: dict) -> str:
+    source = clean_text(str(item.get("source", "")))
+    if has_meaningful_label(source):
+        return source
+    url = str(item.get("url", "")).strip()
+    if "jin10" in url.lower():
+        return "Jin10"
+    host = urlparse(url).netloc.lower().replace("www.", "")
+    return host or "Unknown source"
+
+
+def is_low_signal_news_title(title: str) -> bool:
+    title = clean_text(title)
+    if not title:
+        return True
+    if any(pattern.search(title) for pattern in LOW_SIGNAL_NEWS_PATTERNS):
+        return True
+    return title.endswith(("首页", "频道", "Home"))
+
+
+def score_major_news_item(item: dict) -> int:
+    title = clean_text(str(item.get("title", "")))
+    if is_low_signal_news_title(title):
+        return -10
+
+    title_lower = title.lower()
+    source = normalize_news_source(item).lower()
+    url = str(item.get("url", "")).lower()
+    score = 0
+
+    if any(keyword in title_lower for keyword in MAJOR_NEWS_KEYWORDS):
+        score += 3
+    if any(name in source or name in url for name in MAJOR_NEWS_SOURCES):
+        score += 1
+    if source == "jin10":
+        score += 2
+        if any(keyword in title for keyword in JIN10_LOW_SIGNAL_KEYWORDS):
+            score -= 2
+    if title.startswith("【"):
+        score += 1
+    if len(title) >= 18:
+        score += 1
+    return score
+
+
+def select_major_news(items: List[dict], limit: Optional[int] = None) -> List[dict]:
+    normalized = sort_and_dedupe_news(items)
+    epoch = datetime(1970, 1, 1, tzinfo=TZ)
+    ranked = []
+    fallback = []
+
+    for item in normalized:
+        published_dt = parse_datetime_candidate(str(item.get("published_at", "")))
+        if not within_lookback(published_dt, NEWS_LOOKBACK_HOURS):
+            continue
+        if not is_low_signal_news_title(str(item.get("title", ""))):
+            fallback.append(item)
+        score = score_major_news_item(item)
+        if score < 2:
+            continue
+        ranked.append((score, published_dt or epoch, item))
+
+    ranked.sort(key=lambda row: (row[0], row[1]), reverse=True)
+    selected = [item for _, _, item in ranked]
+    if not selected:
+        selected = fallback
+    if limit:
+        selected = selected[:limit]
+    return selected
+
+
+def select_major_news_with_primary(
+    primary_items: List[dict],
+    secondary_items: List[dict],
+    limit: Optional[int] = None,
+) -> List[dict]:
+    primary_selected = select_major_news(primary_items, limit=limit)
+    secondary_selected = select_major_news(secondary_items)
+    combined: List[dict] = []
+    seen = set()
+
+    for item in primary_selected + secondary_selected:
+        title = clean_text(str(item.get("title", "")))
+        url = str(item.get("url", "")).strip()
+        if not title or not url:
+            continue
+        dedupe_key = (title.lower(), url)
+        if dedupe_key in seen:
+            continue
+        seen
