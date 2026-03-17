@@ -1,0 +1,1158 @@
+(function () {
+  "use strict";
+
+  var APP_TIME_ZONE = "Asia/Shanghai";
+  var STAGES = ["news", "morning", "noon", "health"];
+  var MARKETS = ["A", "HK", "US"];
+  var STAGE_LABELS = {
+    news: "08:00 新闻 / News",
+    morning: "10:00 晨报 / Morning",
+    noon: "12:00 午报 / Noon",
+    health: "健康 / Health"
+  };
+  var STAGE_SHORT_LABELS = {
+    news: "08:00",
+    morning: "10:00",
+    noon: "12:00",
+    health: "健康 / Health"
+  };
+
+  function bi(zh, en) {
+    return zh + " / " + en;
+  }
+
+  function q(id) {
+    return document.getElementById(id);
+  }
+
+  var body = document.body;
+  var config = {
+    bootstrapUrl: body.dataset.bootstrapUrl || "/finance/api/bootstrap",
+    statusUrl: body.dataset.statusUrl || "/finance/api/status",
+    historyUrl: body.dataset.historyUrl || "/finance/api/history-index",
+    archiveBase: body.dataset.archiveBase || "/finance/api/archive/"
+  };
+
+  var appState = {
+    mode: "latest",
+    selectedDate: "",
+    availableDates: [],
+    payload: null,
+    lastGoodPayload: null,
+    lastStatus: null,
+    lastError: null,
+    filters: {
+      stage: "all",
+      market: "ALL"
+    },
+    recommendedPollSeconds: 60,
+    pollTimer: null,
+    initialized: false,
+    busy: false,
+    canvasBalanceFrame: null,
+    canvasResizeTimer: null,
+    focus: {
+      activeLabel: "",
+      returnNode: null
+    }
+  };
+
+  var el = {
+    heroDeck: q("hero-deck"),
+    workspaceModePill: q("workspace-mode-pill"),
+    refreshHealthPill: q("refresh-health-pill"),
+    latestButton: q("latest-button"),
+    refreshButton: q("refresh-button"),
+    stateBanner: q("state-banner"),
+    tradingDayValue: q("trading-day-value"),
+    sessionValue: q("session-value"),
+    pushClockPills: q("push-clock-pills"),
+    pushClockMeta: q("push-clock-meta"),
+    marketTemperatureGrid: q("market-temperature-grid"),
+    portfolioSummaryValue: q("portfolio-summary-value"),
+    portfolioSummaryMeta: q("portfolio-summary-meta"),
+    accessWindowValue: q("access-window-value"),
+    accessWindowMeta: q("access-window-meta"),
+    refreshValue: q("refresh-value"),
+    workspaceDateMeta: q("workspace-date-meta"),
+    archiveSummaryCopy: q("archive-summary-copy"),
+    historyDateSelect: q("history-date-select"),
+    loadHistoryButton: q("load-history-button"),
+    stageFilterGroup: q("stage-filter-group"),
+    marketFilterGroup: q("market-filter-group"),
+    archiveMiniStats: q("archive-mini-stats"),
+    timelineList: q("timeline-list"),
+    referenceCardList: q("reference-card-list"),
+    canvasTitle: q("canvas-title"),
+    canvasCopy: q("canvas-copy"),
+    canvasGrid: document.querySelector(".canvas-grid"),
+    marketBreadthChart: q("market-breadth-chart"),
+    candidateDistributionChart: q("candidate-distribution-chart"),
+    marketSummaryCards: q("market-summary-cards"),
+    morningOverlapList: q("morning-overlap-list"),
+    newsBriefList: q("news-brief-list"),
+    morningDriverList: q("morning-driver-list"),
+    portfolioPanelCopy: q("portfolio-panel-copy"),
+    portfolioMetricGrid: q("portfolio-metric-grid"),
+    noonReadingList: q("noon-reading-list"),
+    portfolioCurveChart: q("portfolio-curve-chart"),
+    allocationList: q("allocation-list"),
+    riskStrip: q("risk-strip"),
+    holdingList: q("holding-list"),
+    contributorsList: q("contributors-list"),
+    detractorsList: q("detractors-list"),
+    healthCard: q("health-card"),
+    deliveryCard: q("delivery-card"),
+    privateLinkCard: q("private-link-card"),
+    autorefreshCard: q("autorefresh-card"),
+    compactNewsList: q("compact-news-list"),
+    globalState: q("global-state"),
+    globalStateKicker: q("global-state-kicker"),
+    globalStateTitle: q("global-state-title"),
+    globalStateMessage: q("global-state-message"),
+    stateRetryButton: q("state-retry-button"),
+    stateLinkButton: q("state-link-button"),
+    focusOverlay: q("focus-overlay"),
+    focusOverlayBackdrop: q("focus-overlay-backdrop"),
+    focusShellKicker: q("focus-shell-kicker"),
+    focusShellTitle: q("focus-shell-title"),
+    focusShellBody: q("focus-shell-body"),
+    focusCloseButton: q("focus-close-button")
+  };
+
+  document.addEventListener("DOMContentLoaded", init);
+
+  function init() {
+    bindEvents();
+
+    var initialState = getRequestedState();
+    if (initialState && initialState !== "authorized") {
+      showGlobalState(initialState);
+      if (initialState === "expired" || initialState === "unauthorized") {
+        return;
+      }
+    }
+
+    showGlobalState("loading");
+    loadInitial();
+  }
+
+  function bindEvents() {
+    if (el.refreshButton) {
+      el.refreshButton.addEventListener("click", function () {
+        if (appState.mode === "archive" && appState.selectedDate && appState.selectedDate !== getLatestDate()) {
+          loadArchive(appState.selectedDate);
+          return;
+        }
+        loadLatest();
+      });
+    }
+
+    if (el.latestButton) {
+      el.latestButton.addEventListener("click", function () {
+        loadLatest();
+      });
+    }
+
+    if (el.loadHistoryButton) {
+      el.loadHistoryButton.addEventListener("click", function () {
+        var selected = el.historyDateSelect ? el.historyDateSelect.value : "";
+        if (selected) {
+          loadArchive(selected);
+          return;
+        }
+        loadLatest();
+      });
+    }
+
+    if (el.historyDateSelect) {
+      el.historyDateSelect.addEventListener("change", function () {
+        var selected = el.historyDateSelect.value;
+        if (!selected) {
+          appState.mode = "latest";
+          renderArchiveControls();
+        }
+      });
+    }
+
+    if (el.stageFilterGroup) {
+      el.stageFilterGroup.addEventListener("click", function (event) {
+        var target = event.target.closest("[data-stage-filter]");
+        if (!target) {
+          return;
+        }
+        appState.filters.stage = target.getAttribute("data-stage-filter") || "all";
+        updateFilterButtons();
+        renderAll();
+      });
+    }
+
+    if (el.marketFilterGroup) {
+      el.marketFilterGroup.addEventListener("click", function (event) {
+        var target = event.target.closest("[data-market-filter]");
+        if (!target) {
+          return;
+        }
+        appState.filters.market = target.getAttribute("data-market-filter") || "ALL";
+        updateFilterButtons();
+        renderAll();
+      });
+    }
+
+    if (el.stateRetryButton) {
+      el.stateRetryButton.addEventListener("click", function () {
+        if (appState.mode === "archive" && appState.selectedDate && appState.selectedDate !== getLatestDate()) {
+          loadArchive(appState.selectedDate);
+          return;
+        }
+        loadLatest();
+      });
+    }
+
+    document.addEventListener("click", function (event) {
+      var readingToggle = event.target.closest("[data-reading-toggle]");
+      if (readingToggle) {
+        event.preventDefault();
+        toggleReadingCard(readingToggle);
+        return;
+      }
+
+      var readingCopy = event.target.closest("[data-reading-copy]");
+      if (readingCopy) {
+        event.preventDefault();
+        handleReadingCopy(readingCopy);
+        return;
+      }
+
+      var readingSummary = event.target.closest(".reading-section summary");
+      if (readingSummary) {
+        window.setTimeout(function () {
+          syncReadingCardState(readingSummary.closest("[data-reading-card]"));
+        }, 0);
+      }
+
+      if (event.target.closest("[data-focus-close]")) {
+        closeFocusView();
+        return;
+      }
+
+      var card = event.target.closest(".focusable-card");
+      if (!card || card.closest(".focus-shell-body")) {
+        return;
+      }
+
+      if (isFocusInteractiveTarget(event.target, card)) {
+        return;
+      }
+
+      event.preventDefault();
+      openFocusView(card, card);
+    });
+
+    if (el.focusOverlayBackdrop) {
+      el.focusOverlayBackdrop.setAttribute("data-focus-close", "true");
+    }
+
+    if (el.focusCloseButton) {
+      el.focusCloseButton.setAttribute("data-focus-close", "true");
+    }
+
+    window.addEventListener("resize", function () {
+      if (appState.canvasResizeTimer) {
+        window.clearTimeout(appState.canvasResizeTimer);
+      }
+      appState.canvasResizeTimer = window.setTimeout(function () {
+        appState.canvasResizeTimer = null;
+        scheduleCanvasBalance();
+      }, 90);
+    });
+
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && el.focusOverlay && el.focusOverlay.classList.contains("is-active")) {
+        event.preventDefault();
+        closeFocusView();
+        return;
+      }
+
+      if ((event.key === "Enter" || event.key === " " || event.key === "Spacebar") && event.target && event.target.classList && event.target.classList.contains("focusable-card")) {
+        event.preventDefault();
+        openFocusView(event.target, event.target);
+      }
+    });
+  }
+
+  function isFocusInteractiveTarget(target, card) {
+    if (!target || !card) {
+      return false;
+    }
+
+    var interactive = target.closest([
+      "a",
+      "button",
+      "input",
+      "select",
+      "textarea",
+      "label",
+      "summary",
+      "[role='button']",
+      "[role='link']",
+      "[contenteditable='true']"
+    ].join(","));
+
+    return !!interactive && interactive !== card;
+  }
+
+  async function loadInitial() {
+    try {
+      await loadLatest({ background: false });
+      var requestedDate = new URL(window.location.href).searchParams.get("date");
+      if (requestedDate && requestedDate !== getLatestDate() && appState.availableDates.indexOf(requestedDate) !== -1) {
+        await loadArchive(requestedDate, { background: true });
+      } else {
+        syncUrl();
+      }
+    } catch (error) {
+      handleLoadError(error, false);
+    }
+  }
+
+  async function loadLatest(options) {
+    options = options || {};
+    setBusy(true);
+
+    if (!options.background && !appState.lastGoodPayload) {
+      showGlobalState("loading");
+    }
+
+    try {
+      var payload = await requestJson(config.bootstrapUrl);
+      consumePayload(payload, "latest");
+      syncHistoryIndex();
+    } catch (error) {
+      handleLoadError(error, true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadArchive(date, options) {
+    options = options || {};
+    if (!date) {
+      return loadLatest(options);
+    }
+
+    setBusy(true);
+    showBanner(bi("正在载入历史回放 " + formatDateLabel(date), "Loading archive replay for " + formatDateLabel(date)), "info");
+
+    try {
+      var payload = await requestJson(config.archiveBase + encodeURIComponent(date));
+      consumePayload(payload, "archive");
+      syncHistoryIndex();
+    } catch (error) {
+      handleLoadError(error, true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function syncHistoryIndex() {
+    try {
+      var payload = await requestJson(config.historyUrl);
+      if (payload && payload.ok) {
+        appState.availableDates = uniqueDates((payload.available_dates || []).concat(appState.availableDates));
+        renderArchiveControls();
+      }
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        handleLoadError(error, true);
+      }
+    }
+  }
+
+  async function pollStatus() {
+    if (!appState.initialized || document.hidden) {
+      return;
+    }
+
+    try {
+      var status = await requestJson(config.statusUrl);
+      appState.lastStatus = status;
+      updateRefreshHealth();
+      renderTopStatus();
+      renderLiveRail();
+
+      var latestGeneratedAt = status.latest_generated_at;
+      var currentGeneratedAt = getDay().generated_at;
+      if (appState.mode === "latest" && isLater(latestGeneratedAt, currentGeneratedAt)) {
+        await loadLatest({ background: true });
+      }
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        handleLoadError(error, true);
+        return;
+      }
+
+      appState.lastError = error;
+      showBanner(bi("自动刷新已暂停，当前显示最近一次成功快照。", "Auto-refresh paused. Showing the last successful snapshot."), "warning");
+      updateRefreshHealth();
+      renderLiveRail();
+    }
+  }
+
+  async function requestJson(url) {
+    var response = await fetch(url, {
+      credentials: "same-origin",
+      headers: {
+        Accept: "application/json"
+      }
+    });
+
+    var text = await response.text();
+    var data = null;
+
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch (error) {
+        if (response.ok) {
+          throw createError("FINANCE_BAD_RESPONSE", bi("工作台返回了无法解析的数据。", "Dashboard returned unreadable data."), response.status);
+        }
+      }
+    }
+
+    if (!response.ok) {
+      throw normalizeHttpError(response.status, data);
+    }
+
+    return data || {};
+  }
+
+  function normalizeHttpError(status, data) {
+    var code = data && data.error && data.error.code ? data.error.code : "";
+    var message = data && data.error && data.error.message ? data.error.message : "Dashboard request failed.";
+
+    if (!code) {
+      if (status === 401) {
+        code = "FINANCE_SESSION_REQUIRED";
+      } else if (status === 404) {
+        code = "FINANCE_ARCHIVE_NOT_FOUND";
+      } else {
+        code = "FINANCE_DATA_UNAVAILABLE";
+      }
+    }
+
+    return createError(code, message, status);
+  }
+
+  function createError(code, message, status) {
+    var error = new Error(message);
+    error.code = code;
+    error.status = status || 0;
+    return error;
+  }
+
+  function handleLoadError(error, allowFallback) {
+    if (isUnauthorizedError(error)) {
+      clearPolling();
+      showBanner(bi("会话已失效，请从今日 Telegram 链接重新进入。", "Session expired. Re-enter from today's Telegram link."), "warning");
+      showGlobalState("unauthorized");
+      return;
+    }
+
+    if (error.code === "FINANCE_ARCHIVE_NOT_FOUND") {
+      showBanner(bi("所选历史快照不存在。", "Selected archive snapshot is not available."), "warning");
+      if (!appState.lastGoodPayload) {
+        showGlobalState("empty");
+      }
+      return;
+    }
+
+    if (allowFallback && appState.lastGoodPayload) {
+      appState.lastError = error;
+      hideGlobalState();
+      showBanner(bi("接口刷新失败，当前显示最近一次成功快照。", "API refresh failed. Showing the last successful snapshot."), "warning");
+      updateRefreshHealth();
+      renderLiveRail();
+      return;
+    }
+
+    showGlobalState("error", {
+      message: error && error.message ? error.message : bi("暂时无法载入金融数据。", "Unable to load finance data.")
+    });
+  }
+
+  function isUnauthorizedError(error) {
+    return !!error && (error.code === "FINANCE_SESSION_REQUIRED" || error.status === 401);
+  }
+
+  function consumePayload(payload, mode) {
+    if (!payload || !payload.ok || !payload.day) {
+      throw createError("FINANCE_DATA_UNAVAILABLE", bi("金融数据尚未就绪。", "Finance data is not available yet."), 500);
+    }
+
+    appState.payload = payload;
+    appState.lastGoodPayload = payload;
+    appState.lastError = null;
+    appState.mode = mode;
+    appState.selectedDate = payload.day.history && payload.day.history.selected_date ? payload.day.history.selected_date : (payload.day.date || "");
+    appState.availableDates = uniqueDates((payload.day.history && payload.day.history.available_dates || []).concat(appState.availableDates));
+    appState.recommendedPollSeconds = getPollSeconds(payload);
+    appState.initialized = true;
+
+    hideGlobalState();
+    clearBanner();
+    renderAll();
+    updateRefreshHealth();
+    schedulePolling(appState.recommendedPollSeconds);
+    syncUrl();
+  }
+
+  function schedulePolling(seconds) {
+    clearPolling();
+    var safeSeconds = Math.max(15, Number(seconds) || 60);
+    appState.pollTimer = window.setInterval(function () {
+      pollStatus();
+    }, safeSeconds * 1000);
+  }
+
+  function clearPolling() {
+    if (appState.pollTimer) {
+      window.clearInterval(appState.pollTimer);
+      appState.pollTimer = null;
+    }
+  }
+
+  function setBusy(busy) {
+    appState.busy = busy;
+    if (el.refreshButton) {
+      el.refreshButton.disabled = busy;
+    }
+    if (el.latestButton) {
+      el.latestButton.disabled = busy;
+    }
+    if (el.loadHistoryButton) {
+      el.loadHistoryButton.disabled = busy;
+    }
+    if (el.historyDateSelect) {
+      el.historyDateSelect.disabled = busy;
+    }
+  }
+
+  function renderAll() {
+    updateFilterButtons();
+    renderHero();
+    renderTopStatus();
+    renderArchiveControls();
+    renderTimeline();
+    renderReferenceCards();
+    renderMarketCanvas();
+    renderPortfolioPanel();
+    renderLiveRail();
+    decorateFocusableCards();
+    scheduleCanvasBalance();
+  }
+
+  function renderHero() {
+    var day = getDay();
+    var marketLabel = appState.filters.market === "ALL" ? "A 股 / 港股 / 美股" : marketDisplayName(appState.filters.market);
+    var stageLabel = appState.filters.stage === "all" ? bi("全阶段", "All stages") : STAGE_LABELS[appState.filters.stage];
+    var workspaceLabel = appState.mode === "latest" ? bi("最新工作台", "Latest workspace") : bi("历史回放", "Archive replay");
+    var dateLabel = day.date ? formatDateLabel(day.date) : bi("当前交易日", "Current day");
+
+    if (el.workspaceModePill) {
+      el.workspaceModePill.textContent = workspaceLabel;
+    }
+
+    if (el.heroDeck) {
+      el.heroDeck.textContent = dateLabel + " · " + marketLabel + " · " + stageLabel + " · " + bi("联动 AI 模拟持仓", "linked AI simulated portfolio");
+    }
+
+    updateRefreshHealth();
+  }
+
+  function renderTopStatus() {
+    var day = getDay();
+    var topStatus = day.top_status || {};
+    var session = day.session || {};
+    var pushes = getStageMeta();
+    var marketTemperatures = topStatus.market_temperatures || {};
+    var portfolioSummary = topStatus.portfolio_summary || {};
+    var health = day.content && day.content.health || {};
+    var healthSeverity = health.severity || inferHealthSeverity(health);
+
+    if (el.tradingDayValue) {
+      el.tradingDayValue.textContent = topStatus.trading_day === false ? bi("休市", "Market pause") : bi("交易日", "Trading day");
+    }
+
+    if (el.sessionValue) {
+      el.sessionValue.textContent = session.authorized
+        ? bi("会话有效至 " + formatTime(session.valid_until), "Session live until " + formatTime(session.valid_until))
+        : bi("需要当日会话", "Session required");
+    }
+
+    if (el.pushClockPills) {
+      setHTML(el.pushClockPills, STAGES.map(function (stage) {
+        return statusPillHTML(STAGE_SHORT_LABELS[stage], pushes[stage].status || "pending", true);
+      }).join(""));
+    }
+
+    if (el.pushClockMeta) {
+      el.pushClockMeta.textContent = healthSeverity === "critical"
+        ? bi("健康告警已触发", "Health alert active")
+        : bi("08:00 / 10:00 / 12:00 + 实时轮询", "08:00 / 10:00 / 12:00 with live polling");
+    }
+
+    if (el.marketTemperatureGrid) {
+      setHTML(el.marketTemperatureGrid, MARKETS.map(function (market) {
+        var value = marketTemperatures[market] || getMarketSummary(day.content && day.content.morning, market).temperature || bi("暂未就绪", "Not ready");
+        return [
+          '<div class="temperature-chip tone-neutral">',
+          "<span>" + escapeHtml(marketToneLabel(market)) + "</span>",
+          "<strong>" + escapeHtml(value) + "</strong>",
+          "</div>"
+        ].join("");
+      }).join(""));
+    }
+
+    if (el.portfolioSummaryValue) {
+      el.portfolioSummaryValue.textContent = formatCurrency(portfolioSummary.portfolio_value);
+    }
+
+    if (el.portfolioSummaryMeta) {
+      var holdingCount = asNumber(portfolioSummary.holding_count);
+      var summaryParts = [];
+      summaryParts.push(formatSignedRatioPercent(portfolioSummary.daily_pnl_pct) + " " + bi("日内", "day"));
+      summaryParts.push(formatSignedRatioPercent(portfolioSummary.turnover_pct) + " " + bi("换手", "turnover"));
+      if (holdingCount !== null) {
+        summaryParts.push(formatNumber(holdingCount) + " " + bi("持仓", "holdings"));
+      }
+      el.portfolioSummaryMeta.textContent = summaryParts.join(" / ");
+    }
+
+    if (el.accessWindowValue) {
+      el.accessWindowValue.textContent = session.authorized ? bi("已授权", "Authorized") : bi("等待授权", "Awaiting authorization");
+    }
+
+    if (el.accessWindowMeta) {
+      var accessMode = prettyAccessMode(day.access && day.access.access_mode);
+      el.accessWindowMeta.textContent = session.valid_until
+        ? bi("有效至 " + formatDateTime(session.valid_until), "Valid until " + formatDateTime(session.valid_until)) + " · " + accessMode
+        : bi("仅限当日会话", "Current-day session only");
+    }
+
+    if (el.refreshValue) {
+      el.refreshValue.textContent = formatDateTime(topStatus.last_refresh_at || day.generated_at || appState.lastStatus && appState.lastStatus.now);
+    }
+
+    if (el.workspaceDateMeta) {
+      el.workspaceDateMeta.textContent = appState.mode === "latest"
+        ? bi("最新视图", "Latest view") + " · " + formatDateLabel(day.date)
+        : bi("历史回放", "Archive replay") + " · " + formatDateLabel(appState.selectedDate);
+    }
+  }
+
+  function renderArchiveControls() {
+    var day = getDay();
+    var latestDate = day.date || "";
+    var dates = uniqueDates([latestDate].concat(appState.availableDates));
+    appState.availableDates = dates;
+
+    if (el.historyDateSelect) {
+      var currentValue = appState.mode === "archive" ? appState.selectedDate : "";
+      var options = ['<option value="">' + escapeHtml(bi("最新可用", "Latest available")) + (latestDate ? " · " + escapeHtml(formatDateLabel(latestDate)) : "") + "</option>"];
+
+      dates.forEach(function (date) {
+        options.push('<option value="' + escapeHtml(date) + '"' + (currentValue === date ? " selected" : "") + ">" + escapeHtml(formatDateLabel(date)) + "</option>");
+      });
+
+      setHTML(el.historyDateSelect, options.join(""));
+    }
+
+    if (el.archiveSummaryCopy) {
+      el.archiveSummaryCopy.textContent = appState.mode === "latest"
+        ? bi("最新模式跟随主工作台数据，并持续轮询状态更新。", "Latest mode follows the canonical payload and keeps polling for status updates.")
+        : bi("历史模式会固定选定日期，并在同一工作台里回放当日全量快照。", "Archive mode pins a selected date and replays the full day snapshot in the same shell.");
+    }
+
+    if (el.archiveMiniStats) {
+      var miniStats = [
+        miniStatHTML(bi("所选日期", "Selected day"), appState.mode === "archive" ? formatDateLabel(appState.selectedDate) : bi("最新", "Latest")),
+        miniStatHTML(bi("可回放日期", "Available replays"), String(dates.length || 0)),
+        miniStatHTML(bi("推送焦点", "Push emphasis"), appState.filters.stage === "all" ? bi("全阶段", "All stages") : STAGE_LABELS[appState.filters.stage]),
+        miniStatHTML(bi("市场范围", "Market scope"), appState.filters.market === "ALL" ? "A / HK / US" : marketDisplayName(appState.filters.market))
+      ];
+      setHTML(el.archiveMiniStats, miniStats.join(""));
+    }
+  }
+
+  function renderTimeline() {
+    var day = getDay();
+    var content = day.content || {};
+    var pushes = getStageMeta();
+    var visibleStages = STAGES.filter(function (stage) {
+      return appState.filters.stage === "all" || appState.filters.stage === stage;
+    });
+
+    if (!visibleStages.length) {
+      renderEmpty(el.timelineList, bi("未选择推送阶段", "No stage selected"), bi("请选择一种推送类型以查看时间轴卡片。", "Choose a push type to inspect timeline cards."));
+      return;
+    }
+
+    var cards = visibleStages.map(function (stage) {
+      var stageContent = content[stage] || {};
+      var summary = summarizeStage(stage, stageContent, day);
+      var highlights = buildStageHighlights(stage, stageContent, day);
+      return [
+        '<article class="timeline-card" data-stage="' + escapeHtml(stage) + '">',
+        '<div class="timeline-card-head">',
+        "<div>",
+        "<h3>" + escapeHtml(STAGE_LABELS[stage]) + "</h3>",
+        '<p class="timeline-card-meta">' + escapeHtml(formatDateTime(stageContent.generated_at || pushes[stage].generated_at || day.generated_at)) + "</p>",
+        "</div>",
+        statusPillHTML(prettyStageStatus(pushes[stage].status || stageContent.status || "pending"), pushes[stage].status || stageContent.status || "pending", true),
+        "</div>",
+        summary ? '<p class="timeline-card-copy">' + escapeHtml(summary) + "</p>" : "",
+        highlights.length
+          ? '<ul class="timeline-card-list">' + highlights.map(function (item) {
+            return "<li>" + escapeHtml(item) + "</li>";
+          }).join("") + "</ul>"
+          : "",
+        stageDeliveryHTML(stageContent.telegram_delivery || pushes[stage].telegram_delivery),
+        "</article>"
+      ].join("");
+    });
+
+    setHTML(el.timelineList, cards.join(""));
+  }
+
+  function renderReferenceCards() {
+    var day = getDay();
+    var news = day.content && day.content.news || {};
+    var morning = day.content && day.content.morning || {};
+    var noon = day.content && day.content.noon || {};
+    var health = day.content && day.content.health || {};
+    var items = [];
+
+    if (isStageVisible("news")) {
+      safeArray(news.watch_points).slice(0, 2).forEach(function (item) {
+        items.push({
+          tag: bi("新闻观察", "News watch"),
+          title: bi("观察点", "Watch point"),
+          copy: item
+        });
+      });
+    }
+
+    if (isStageVisible("morning")) {
+      if (morning.ai_reference && morning.ai_reference.note) {
+        items.push({
+          tag: bi("晨报 / AI", "Morning / AI"),
+          title: bi("晨报重叠备注", "Morning overlap note"),
+          copy: morning.ai_reference.note
+        });
+      }
+
+      var topPositions = safeArray(morning.ai_reference && morning.ai_reference.top_positions).slice(0, 2);
+      if (topPositions.length) {
+        items.push({
+          tag: bi("晨报组合", "Morning book"),
+          title: bi("重点引用持仓", "Top referenced holdings"),
+          copy: topPositions.map(function (item) {
+            return (item.display_symbol || item.symbol || item.name || bi("持仓", "Holding")) + " " + formatRatioPercent(item.portfolio_pct);
+          }).join(" · ")
+        });
+      }
+    }
+
+    if (isStageVisible("noon")) {
+      safeArray(noon.advice).slice(0, 3).forEach(function (item) {
+        items.push({
+          tag: bi("午间建议", "Noon advice"),
+          title: bi("组合叙事", "Portfolio narrative"),
+          copy: item
+        });
+      });
+    }
+
+    if (isStageVisible("health")) {
+      if (health.severity && health.severity !== "none") {
+        items.push({
+          tag: bi("健康", "Health"),
+          title: prettySeverity(health.severity) + " " + bi("源状态", "source state"),
+          copy: safeArray(health.issues).slice(0, 2).join(" · ") || bi("数据源问题会在右侧 live rail 中高亮。", "Source issues are highlighted in the live rail.")
+        });
+      }
+    }
+
+    if (!items.length) {
+      renderEmpty(el.referenceCardList, bi("参考卡片将在此出现", "Reference cards will appear here"), bi("观察点、AI 备注、投资建议和源健康状态会在这里汇总。", "Watch points, AI notes, advice, and source health will populate here."));
+      return;
+    }
+
+    setHTML(el.referenceCardList, items.map(function (item) {
+      return [
+        '<article class="reference-card">',
+        '<span class="reference-tag">' + escapeHtml(item.tag) + "</span>",
+        "<h3>" + escapeHtml(item.title) + "</h3>",
+        "<p>" + escapeHtml(item.copy) + "</p>",
+        "</article>"
+      ].join("");
+    }).join(""));
+  }
+
+  function renderMarketCanvas() {
+    var day = getDay();
+    var morning = day.content && day.content.morning || {};
+    var markets = morning.markets || {};
+    var marketKeys = getVisibleMarketKeys(markets);
+
+    if (el.canvasTitle) {
+      el.canvasTitle.textContent = marketKeys.length
+        ? marketKeys.map(marketDisplayName).join(" · ") + " · " + bi("宽度与持仓联动", "breadth & portfolio linkage")
+        : bi("晨间宽度、分布与持仓联动", "Morning breadth, distribution, and linkage");
+    }
+
+    if (el.canvasCopy) {
+      el.canvasCopy.textContent = appState.filters.stage === "all" || appState.filters.stage === "morning"
+        ? bi("中心画布先给出图表，再解释这些信号为何影响 AI 模拟持仓。", "The canvas stays chart-first, then explains why those setups matter for the simulated portfolio.")
+        : bi("即使切到其他阶段，晨间上下文也会保留，作为后续推送与持仓复盘的底图。", "Morning context remains visible because it anchors later pushes and portfolio review.");
+    }
+
+    renderBreadthChart(marketKeys.map(function (key) {
+      return { key: key, summary: markets[key] || {} };
+    }));
+
+    renderCandidateDistributionChart(marketKeys.map(function (key) {
+      return { key: key, summary: markets[key] || {} };
+    }));
+
+    renderMarketSummaryCards(marketKeys.map(function (key) {
+      return { key: key, summary: markets[key] || {} };
+    }));
+
+    renderMorningOverlap(morning);
+    renderNewsBriefs(day.content && day.content.news || {});
+    renderMorningDrivers(morning);
+  }
+
+  function renderPortfolioPanelLegacy() {
+    var day = getDay();
+    var morning = day.content && day.content.morning || {};
+    var noon = day.content && day.content.noon || {};
+    var summary = noon.portfolio_summary || day.top_status && day.top_status.portfolio_summary || {};
+    var positions = getSortedPositions(noon);
+    var allocations = getAllocationRows(noon);
+    var overlapItems = buildOverlapItems(morning, positions);
+    var risk = computeRisk(positions);
+
+    if (el.portfolioPanelCopy) {
+      el.portfolioPanelCopy.textContent = bi("晨报重叠 " + overlapItems.length + " 个，当前为 " + risk.label + "，共 " + positions.length + " 个持仓。", "There are " + overlapItems.length + " overlaps with morning ideas, " + risk.label + " across " + positions.length + " holdings.");
+    }
+
+    if (el.portfolioMetricGrid) {
+      var metrics = [
+        metricCardHTML(bi("账户净值", "Account value"), formatCurrency(summary.portfolio_value), bi("当前 AI 模拟账户净值。", "Current simulated account value."), "neutral"),
+        metricCardHTML(bi("当日盈亏", "Daily PnL"), formatSignedCurrency(summary.daily_pnl_amount), formatSignedRatioPercent(summary.daily_pnl_pct), toneFromNumeric(summary.daily_pnl_amount)),
+        metricCardHTML(bi("换手规模", "Turnover"), formatCurrency(summary.turnover_amount), formatSignedRatioPercent(summary.turnover_pct) + " " + bi("占组合", "of portfolio"), toneFromNumeric(summary.turnover_pct)),
+        metricCardHTML(bi("持仓数量", "Holdings"), String(positions.length || asNumber(summary.holding_count) || 0), bi("当前 AI 模拟持仓数量。", "Current simulated positions."), "neutral"),
+        metricCardHTML(bi("重叠数量", "Overlap count"), String(overlapItems.length), bi("晨报优选与模拟仓的交集。", "Morning picks intersecting with the book."), overlapItems.length ? "positive" : "neutral"),
+        metricCardHTML(bi("风险姿态", "Risk posture"), risk.label, bi("最大单仓 ", "Largest line ") + formatRatioPercent(risk.largestPct) + " · " + bi("前三合计 ", "top three ") + formatRatioPercent(risk.topThreePct), risk.tone)
+      ];
+      setHTML(el.portfolioMetricGrid, metrics.join(""));
+    }
+
+    renderPortfolioPath(summary);
+    renderAllocationList(allocations);
+    renderRiskStrip(risk, overlapItems.length);
+    renderHoldingList(positions);
+    renderImpactList(el.contributorsList, safeArray(summary.top_contributors), bi("贡献项", "Contributors"));
+    renderImpactList(el.detractorsList, safeArray(summary.top_detractors), bi("拖累项", "Detractors"));
+  }
+
+  function renderLiveRail() {
+    var day = getDay();
+    var content = day.content || {};
+    var pushes = getStageMeta();
+    var health = content.health || {};
+    var access = day.access || {};
+    var session = day.session || {};
+    var severity = health.severity || inferHealthSeverity(health);
+    var news = content.news || {};
+
+    if (el.healthCard) {
+      el.healthCard.className = "live-card " + toneClassName(severity === "none" ? "positive" : severity);
+      setHTML(el.healthCard, [
+        "<h3>" + escapeHtml(bi("数据源健康", "Source health")) + "</h3>",
+        "<p>" + escapeHtml(severity === "none" ? bi("监控中的数据源当前健康。", "All monitored sources look healthy.") : prettySeverity(severity) + " " + bi("覆盖异常已触发。", "coverage issue detected.")) + "</p>",
+        safeArray(health.issues).length
+          ? '<ul class="live-meta-list">' + safeArray(health.issues).slice(0, 4).map(function (item) {
+            return "<li>" + escapeHtml(item) + "</li>";
+          }).join("") + "</ul>"
+          : '<ul class="live-meta-list"><li>' + escapeHtml(bi("暂无活跃问题。", "No active issues reported.")) + "</li></ul>"
+      ].join(""));
+    }
+
+    if (el.deliveryCard) {
+      var deliveryItems = STAGES.map(function (stage) {
+        var delivery = pushes[stage].telegram_delivery || {};
+        return [
+          '<div class="delivery-item">',
+          "<span>" + escapeHtml(STAGE_LABELS[stage]) + "</span>",
+          statusPillHTML(prettyStageStatus(delivery.status || pushes[stage].status || "pending"), delivery.status || pushes[stage].status || "pending", true),
+          "</div>"
+        ].join("");
+      }).join("");
+
+      setHTML(el.deliveryCard, [
+        "<h3>" + escapeHtml(bi("Telegram 投递", "Telegram delivery")) + "</h3>",
+        "<p>" + escapeHtml(bi("Telegram 仅推送私有链接，叙事与分析保留在工作台内。", "Telegram remains URL-only. Narrative stays inside the dashboard.")) + "</p>",
+        '<div class="delivery-list">' + deliveryItems + "</div>"
+      ].join(""));
+    }
+
+    if (el.privateLinkCard) {
+      el.privateLinkCard.className = "live-card tone-neutral";
+      setHTML(el.privateLinkCard, [
+        "<h3>" + escapeHtml(bi("私有链接窗口", "Private link window")) + "</h3>",
+        "<p>" + escapeHtml(session.authorized ? bi("当日会话已生效。", "Current-day session is active.") : bi("需要今日 Telegram 私有链接完成授权。", "A current-day Telegram access link is required.")) + "</p>",
+        '<ul class="live-meta-list">',
+        "<li>" + escapeHtml(bi("入口", "Entry route")) + ": " + escapeHtml(access.entry_route || "/finance") + "</li>",
+        "<li>" + escapeHtml(bi("访问模式", "Access mode")) + ": " + escapeHtml(prettyAccessMode(access.access_mode)) + "</li>",
+        "<li>" + escapeHtml(bi("有效至", "Valid until")) + ": " + escapeHtml(formatDateTime(session.valid_until || day.index_valid_until || access.session_valid_until)) + "</li>",
+        "</ul>"
+      ].join(""));
+    }
+
+    if (el.autorefreshCard) {
+      var refreshTone = appState.lastError ? "warning" : (appState.mode === "archive" ? "neutral" : "positive");
+      el.autorefreshCard.className = "live-card " + toneClassName(refreshTone);
+      setHTML(el.autorefreshCard, [
+        "<h3>" + escapeHtml(bi("自动刷新", "Auto-refresh")) + "</h3>",
+        "<p>" + escapeHtml(appState.lastError
+          ? bi("接口异常后已暂停轮询，当前保留最近一次成功快照。", "Polling paused after an API issue. The last successful snapshot stays on screen.")
+          : (appState.mode === "archive"
+            ? bi("历史回放已固定，直到你切回最新视图。", "Archive replay is pinned until you switch back to latest.")
+            : bi("最新模式会轮询状态接口，以捕捉新的金融分析产物。", "Latest mode polls the status endpoint to catch new finance artifacts."))) + "</p>",
+        '<ul class="live-meta-list">',
+        "<li>" + escapeHtml(bi("最新生成", "Latest generated")) + ": " + escapeHtml(formatDateTime(appState.lastStatus && appState.lastStatus.latest_generated_at || day.generated_at)) + "</li>",
+        "<li>" + escapeHtml(bi("建议轮询", "Recommended poll")) + ": " + escapeHtml(String(appState.lastStatus && appState.lastStatus.recommended_poll_seconds || appState.recommendedPollSeconds || 60)) + "s</li>",
+        "<li>" + escapeHtml(bi("当前时间", "Now")) + ": " + escapeHtml(formatDateTime(appState.lastStatus && appState.lastStatus.now || day.generated_at)) + "</li>",
+        "</ul>"
+      ].join(""));
+    }
+
+    renderCompactNews(news);
+  }
+
+  function renderBreadthChart(entries) {
+    var hasData = entries.some(function (entry) {
+      var breadth = entry.summary && entry.summary.breadth || {};
+      return Number(asNumber(breadth.total) || asNumber(breadth.up) || asNumber(breadth.down) || asNumber(breadth.flat));
+    });
+
+    if (!hasData) {
+      renderEmpty(el.marketBreadthChart, bi("宽度图表暂未就绪", "Breadth chart not available yet"), bi("市场扫描完成后，这里会展示晨间涨跌宽度。", "Morning breadth data will render here after the scan finishes."));
+      return;
+    }
+
+    var rows = entries.map(function (entry) {
+      var breadth = entry.summary && entry.summary.breadth || {};
+      var up = asNumber(breadth.up) || 0;
+      var down = asNumber(breadth.down) || 0;
+      var flat = asNumber(breadth.flat) || 0;
+      var total = asNumber(breadth.total) || (up + down + flat);
+      var upWidth = total ? (up / total) * 100 : 0;
+      var flatWidth = total ? (flat / total) * 100 : 0;
+      var downWidth = total ? (down / total) * 100 : 0;
+
+      return [
+        '<div class="breadth-row">',
+        '<div class="breadth-row-label">' + escapeHtml(marketDisplayName(entry.key)) + "</div>",
+        '<div class="stacked-bar">',
+        buildSegment(upWidth, "segment-up"),
+        buildSegment(flatWidth, "segment-flat"),
+        buildSegment(downWidth, "segment-down"),
+        "</div>",
+        '<div class="breadth-meta">' + escapeHtml(up + " / " + flat + " / " + down) + "</div>",
+        "</div>"
+      ].join("");
+    });
+
+    setHTML(el.marketBreadthChart, [
+      '<div class="breadth-list">',
+      rows.join(""),
+      "</div>",
+      '<div class="legend-row">',
+      '<span class="legend-chip"><span class="legend-swatch segment-up"></span>' + escapeHtml(bi("上涨", "Up")) + "</span>",
+      '<span class="legend-chip"><span class="legend-swatch segment-flat"></span>' + escapeHtml(bi("平盘", "Flat")) + "</span>",
+      '<span class="legend-chip"><span class="legend-swatch segment-down"></span>' + escapeHtml(bi("下跌", "Down")) + "</span>",
+      "</div>"
+    ].join(""));
+  }
+
+  function renderCandidateDistributionChart(entries) {
+    var maxCount = 0;
+    entries.forEach(function (entry) {
+      maxCount = Math.max(maxCount, asNumber(entry.summary && entry.summary.candidate_count) || 0);
+    });
+
+    if (!maxCount) {
+      renderEmpty(el.candidateDistributionChart, bi("候选分布暂未就绪", "Candidate distribution not available yet"), bi("晨间扫描完成后，可见市场会在这里显示候选数量。", "Visible markets will show candidate counts after the morning scan."));
+      return;
+    }
+
+    var columns = entries.map(function (entry) {
+      var count = asNumber(entry.summary && entry.summary.candidate_count) || 0;
+      var height = maxCount ? Math.max(8, (count / maxCount) * 100) : 0;
+      return [
+        '<div class="candidate-column">',
+        '<div class="candidate-bar">',
+        '<div class="candidate-bar-fill" style="height:' + escapeHtml(height.toFixed(2)) + '%"></div>',
+        "</div>",
+        '<div class="candidate-label">' + escapeHtml(marketDisplayName(entry.key)) + "</div>",
+        '<div class="candidate-value">' + escapeHtml(formatNumber(count)) + " " + escapeHtml(bi("个候选", "candidates")) + "</div>",
+        "</div>"
+      ].join("");
+    });
+
+    setHTML(el.candidateDistributionChart, '<div class="candidate-chart">' + columns.join("") + "</div>");
+  }
+
+  function renderMarketSummaryCards(entries) {
+    if (!entries.length) {
+      renderEmpty(el.marketSummaryCards, bi("市场摘要待就绪", "Market summary pending"), bi("请选择一个可见市场，或等待晨报数据填充摘要卡片。", "Select a visible market or wait for the morning payload."));
+      return;
+    }
+
+    var html = entries.map(function (entry) {
+      var summary = entry.summary || {};
+      var indexRow = safeArray(summary.indices)[0];
+      var leaderRow = safeArray(summary.leaders)[0];
+      var pickRows = safeArray(summary.picks).slice(0, 3);
+
+      return [
+        '<article class="summary-card">',
+        '<div class="summary-head">',
+        "<div>",
+        '<h3 class="summary-market">' + escapeHtml(marketDisplayName(entry.key)) + "</h3>",
+        '<p class="summary-temp">' + escapeHtml(summary.temperature || bi("暂未就绪", "Not ready")) + "</p>",
+        "</div>",
+        '<span class="inline-pill">' + escapeHtml(String(asNumber(summary.candidate_count) || 0)) + " " + escapeHtml(bi("个机会", "setups")) + "</span>",
+        "</div>",
+        '<div class="summary-block">',
+        summaryRowHTML(bi("宽度", "Breadth"), breadthLabel(summary.breadth)),
+        summaryRowHTML(bi("指数脉冲", "Index pulse"), marketRowLabel(indexRow)),
+        summaryRowHTML(bi("领涨", "Leader"), marketRowLabel(leaderRow)),
+        "</div>",
+        pickRows.length ? '<div class="inline-list">' + pickRows.map(function (item) {
+          return '<span class="inline-pill">' + escapeHtml((item.display_symbol || item.symbol || item.name || bi("标的", "Pick")) + " " + formatSignedPercent(item.pct_chg)) + "</span>";
+        }).join("") + "</div>" : '<div class="inline-list"><span class="inline-pill">' + escapeHtml(bi("暂无优选", "No picks yet")) + "</span></div>",
+        "</article>"
+      ].join("");
+    }).join("");
+
+    setHTML(el.marketSummaryCards, html);
+  }
+
+  function renderMorningOverlap(morning) {
+    var positions = getSortedPositions(getDay().content && getDay().content.noon || {});
+    var overlapItems = buildOverlapItems(morning, positions);
+
+    if (!overlapItems.length) {
+      renderEmpty(el.morningOverlapList, bi("暂未发现重叠", "No overlap yet"), bi("晨报优选与 AI 模拟持仓的交集会在这里显示。", "Morning picks and simulated positions are compared here."));
+      return;
+    }
+
+    setHTML(el.morningOverlapList, overlapItems.slice(0, 6).map(function (item) {
+      return [
+        '<article class="overlap-card">',
+        "<div>",
+        '<div class="overlap-symbol">' + escapeHtml(item.display_symbol || item.symbol || item.name || bi("观点", "Idea")) + "</div>",
+        "<p>" + escapeHtml(item.name || bi("未命名标的", "Unnamed instrument")) + "</p>",
+        '<p class="overlap-meta">' + escapeHtml((item.market ? marketDisplayName(item.market) + " · " : "") + (item.note || bi("来自晨报与 AI 联动参考。", "Referenced by the morning AI linkage."))) + "</p>",
+        "</div>",
+        '<span class="overlap-flag">' + escapeHtml(item.held ? bi("已在持仓", "In portfolio") : bi("观察名单", "Watchlist")) + "</span>",
+        "</article>"
+      ].join("");
+    }).join(""));
+  }
+
+  function renderNewsBriefsLegacy(news) {
+    var cards = [];
+    var selectedNews = safeArray(news.selected_news).slice(0, 6);
+    var watchPoints = safeArray(news.watch_points).slice(0, 6);
+    var newsSummary = news.news_summary || {};
+    var reportDigest = parseReportDigest(news.message_text);
+
+    if (newsSummary.headline || safeArray(newsSummary.bullets).length) {
+      cards.push([
+        '<article class="news-card news-card--summary">',
+        '<p class="news-kicker">' + escapeHtml(newsSummary.mode === "openclaw" ? bi("OpenClaw 摘要", "OpenClaw brief") : bi("摘要", "Summary")) + "</p>",
+        newsSummary.headline ? '<p class="news-title">' + escapeHtml(newsSummary.headline) + "</p>" : "",
+        safeArray(newsSummary.bullets).length
+          ? '<ul class="note-list">' + safeArray(newsSummary.bullets).slice(0, 3).map(function (item) {
+            return "<li>" + escapeHtml(item) + "</li>";
+          }).join("") + "</ul>"
+          : "",
+        newsSummary.risk_note ? '<p class="news-meta">' + escapeHtml(newsSummary.risk_note) + "</p>" : "",
+        "</article>"
+      ].join(""));
+    }
+
+    if (reportDigest.title || reportDigest.sections.length) {
+      cards.push([
+        '<article class="news-card news-card--reading">',
+        '<p class="news-kicker">' + escapeHtml(bi("详细新闻报", "Detailed briefing")) + "</p>",
+        reportDigest.title ? '<p class="news-title">' + escapeHtml(reportDigest.title) + "</p>" : "",
+        safeArray(reportDigest.intro).length
+          ? '<div class="reading-intro">' + safeArray(reportDigest.intro).slice(0, 2).map(function (item) {
+            return "<p>" + escapeHtml(item) + "</p>";
+          }).join("") + "</div>"
+          : "",
+        reportDigest.sections.length
+          ? '<div class="reading-stack">' + reportDigest.sections.map(function (section, index) {
+            return [
+              '<details class="reading-section"' + (index === 0 ? " open" : "") + ">",
+              "<summary>" + escapeHtml(section.title) + "</summary>",
+              '<div class="reading-section-content">',
+              section.rows.length
+                ? '<ul class="reading-section-list">' + section.rows.map(function (item) {
+                  return "<li>" + escapeHtml(item) + "</li>";
+                }).join("") + "</ul>"
+                : "",
+              "</div>",
+              "</details>"
+            ].join("");
+          }).join("") + "</div>"
+          : "",
+        "</article>"
+      ].join(""));
+    }
+
+    selectedNews.forEach(function (item) {
+      var url = safeUrl(item.url);
+      cards.push([
+        '<article class="news-card">',
+        '<p class="news-kicker">' + escapeHtml(bi("精选标题", "Selected headline")) + "</p>",
+        url !== "#"
+          ? '<a href="' + escapeHtml(url) + '" target="_blank" rel="noreferrer noopener">'
+          : "<div>",
+        '<p class="news-title">' + escapeHtml(item.title || bi("未命名标题", "Untitled headline")) + "</p>",
+        url !== "#" ? "</a>" : "</div>",
+        item.ai_summary ? '<p class="news-brief">' + escapeHtml(item.ai_summary) + "</p>" : "",
+        '<p class="news-meta">' + escapeHtml((item.source || bi("来源待补", "Source pending")) + " · " + formatDateTime(item.published_at)) + "</p>",
+        "</article>"
+      ].join(""));
+    });
+
+    if (watchPoints.length) {
+      cards.push([
+        '<article class="news-card">',
+        '<p class="news-kicker">' + escapeHtml(bi("观察点", "Watch points")) + "</p>",
+        '<ul class="note-list">',
+        watchPoints.map(function (item) {
+          return "<li>" + escapeHtml(item) + "</li>";
+        }).join(""),
+        "</ul>",
+        "</article>"
+      ].jo
