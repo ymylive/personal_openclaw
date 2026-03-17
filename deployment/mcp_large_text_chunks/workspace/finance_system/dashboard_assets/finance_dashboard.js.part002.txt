@@ -1,0 +1,1274 @@
+in(""));
+    }
+
+    if (!cards.length) {
+      renderEmpty(el.newsBriefList, bi("新闻流暂未就绪", "News stream not available yet"), bi("08:00 新闻推送完成后，精选标题和观察点会在这里出现。", "Selected headlines and watch points appear here after the 08:00 push."));
+      return;
+    }
+
+    setHTML(el.newsBriefList, cards.join(""));
+  }
+
+  function renderMorningDriversLegacy(morning) {
+    var drivers = safeArray(morning.drivers).slice(0, 4);
+    var errors = toKeyValuePairs(morning.errors);
+    var items = [];
+
+    drivers.forEach(function (item) {
+      var url = safeUrl(item.url);
+      items.push([
+        '<article class="driver-item">',
+        '<div class="driver-copy">',
+        '<p class="driver-label">' + escapeHtml(bi("驱动", "Driver")) + "</p>",
+        url !== "#"
+          ? '<a class="driver-link" href="' + escapeHtml(url) + '" target="_blank" rel="noreferrer noopener"><p class="driver-title">' + escapeHtml(item.title || bi("未命名驱动", "Untitled driver")) + "</p></a>"
+          : '<p class="driver-title">' + escapeHtml(item.title || bi("未命名驱动", "Untitled driver")) + "</p>",
+        item.ai_summary ? '<p class="driver-brief">' + escapeHtml(item.ai_summary) + "</p>" : "",
+        '<p class="driver-meta">' + escapeHtml((item.source || bi("来源待补", "Source pending")) + " · " + formatDateTime(item.published_at)) + "</p>",
+        "</div>",
+        statusPillHTML(bi("实时", "Live"), "ready", true),
+        "</article>"
+      ].join(""));
+    });
+
+    errors.slice(0, 2).forEach(function (entry) {
+      items.push([
+        '<article class="driver-item">',
+        '<div class="driver-copy">',
+        '<p class="driver-label">' + escapeHtml(bi("覆盖备注", "Coverage note")) + "</p>",
+        '<p class="driver-title">' + escapeHtml(entry.key) + "</p>",
+        '<p class="driver-meta">' + escapeHtml(entry.value) + "</p>",
+        "</div>",
+        statusPillHTML(bi("源", "Source"), "warning", true),
+        "</article>"
+      ].join(""));
+    });
+
+    if (!items.length) {
+      renderEmpty(el.morningDriverList, bi("晨间驱动待就绪", "Morning drivers pending"), bi("晨报准备完成后，跨市场驱动与覆盖备注会在这里出现。", "Cross-market catalysts and coverage notes appear here when the morning payload is ready."));
+      return;
+    }
+
+    setHTML(el.morningDriverList, items.join(""));
+  }
+
+  function renderPortfolioPath(summary) {
+    var previous = asNumber(summary.previous_portfolio_value);
+    var current = asNumber(summary.portfolio_value);
+
+    if (previous === null && current === null) {
+      renderEmpty(el.portfolioCurveChart, bi("净值路径暂不可用", "Portfolio path unavailable"), bi("午间组合分析带出净值数据后，这里会绘制会话路径。", "The portfolio panel will draw a path once noon analysis includes value data."));
+      return;
+    }
+
+    var values;
+    if (previous !== null && current !== null) {
+      values = [
+        previous,
+        previous + ((current - previous) * 0.28),
+        previous + ((current - previous) * 0.62),
+        current
+      ];
+    } else {
+      var baseline = current !== null ? current : previous;
+      values = [baseline, baseline, baseline, baseline];
+    }
+
+    var labels = ["昨收", "开盘", "中段", "现在"];
+    setHTML(el.portfolioCurveChart, '<div class="sparkline-shell">' + buildSparklineSVG(values, labels) + "</div>");
+  }
+
+  function renderAllocationList(allocations) {
+    if (!allocations.length) {
+      renderEmpty(el.allocationList, bi("敞口分布暂未就绪", "Allocation split not available yet"), bi("午间组合分析准备完成后，这里会出现分类敞口。", "Allocation buckets appear here once noon analysis is ready."));
+      return;
+    }
+
+    setHTML(el.allocationList, allocations.slice(0, 6).map(function (item) {
+      var pct = asNumber(item.category_pct) || 0;
+      var amount = asNumber(item.category_amount);
+      var picks = safeArray(item.picks).slice(0, 2).map(function (pick) {
+        return pick.symbol || pick.name || bi("持仓", "Holding");
+      }).join(" · ");
+      var metaParts = [
+        amount === null ? "" : formatCurrency(amount),
+        picks ? bi("重点", "Focus") + " " + picks : ""
+      ].filter(Boolean);
+      return [
+        '<div class="exposure-row">',
+        '<div class="exposure-head">',
+        '<div class="exposure-copy">',
+        '<span class="exposure-name">' + escapeHtml(item.name || item.key || bi("分类", "Bucket")) + "</span>",
+        metaParts.length ? '<p class="exposure-meta">' + escapeHtml(metaParts.join(" · ")) + "</p>" : "",
+        "</div>",
+        "<strong>" + escapeHtml(formatRatioPercent(pct)) + "</strong>",
+        "</div>",
+        '<div class="bar-track"><div class="bar-fill" style="width:' + escapeHtml(scaleRatioPercent(pct).toFixed(2)) + '%"></div></div>',
+        "</div>"
+      ].join("");
+    }).join(""));
+  }
+
+  function renderRiskStrip(risk, overlapCount) {
+    setHTML(el.riskStrip, [
+      riskChipHTML(bi("最大单仓", "Largest line"), formatRatioPercent(risk.largestPct), bi("当前最高单一持仓权重。", "Highest single position weight.")),
+      riskChipHTML(bi("前三合计", "Top three"), formatRatioPercent(risk.topThreePct), bi("前三大持仓合计占比。", "Combined share of the top three holdings.")),
+      riskChipHTML(bi("重叠数量", "Overlap"), String(overlapCount), bi("晨报观点中已反映到模拟仓的数量。", "Morning ideas currently reflected in the simulated book."))
+    ].join(""));
+  }
+
+  function renderHoldingList(positions) {
+    if (!positions.length) {
+      renderEmpty(el.holdingList, bi("持仓暂未就绪", "Holdings not available yet"), bi("午间组合数据就绪后，这里会列出当前 AI 模拟持仓。", "Current simulated holdings appear here when the noon payload is present."));
+      return;
+    }
+
+    setHTML(el.holdingList, positions.slice(0, 6).map(function (item) {
+      var pct = asNumber(item.portfolio_pct) || 0;
+      var amount = asNumber(item.amount_usd);
+      var symbol = item.symbol || "";
+      var metaParts = [
+        item.category || bi("分类待补", "Category pending"),
+        amount === null ? "" : formatCurrency(amount),
+        formatDateTime(item.updated_at)
+      ].filter(Boolean);
+      return [
+        '<article class="holding-item">',
+        '<div class="holding-main">',
+        '<div class="holding-headline">',
+        '<p class="holding-name">' + escapeHtml(item.name || symbol || bi("未命名持仓", "Unnamed position")) + "</p>",
+        symbol ? '<span class="holding-symbol">' + escapeHtml(symbol) + "</span>" : "",
+        "</div>",
+        '<p class="holding-meta">' + escapeHtml(metaParts.join(" · ")) + "</p>",
+        '<div class="holding-bar-track"><div class="holding-bar-fill" style="width:' + escapeHtml(scaleRatioPercent(pct).toFixed(2)) + '%"></div></div>',
+        "</div>",
+        '<div class="holding-weight"><strong>' + escapeHtml(formatRatioPercent(pct)) + '</strong><span>' + escapeHtml(bi("组合占比", "Portfolio share")) + "</span></div>",
+        "</article>"
+      ].join("");
+    }).join(""));
+  }
+
+  function renderImpactList(container, items, emptyLabel) {
+    if (!container) {
+      return;
+    }
+
+    if (!items.length) {
+      renderEmpty(container, emptyLabel + " " + bi("待就绪", "pending"), emptyLabel + " " + bi("会在收益归因数据准备完成后显示。", "will appear here when PnL attribution is available."));
+      return;
+    }
+
+    setHTML(container, items.slice(0, 5).map(function (item) {
+      return [
+        '<article class="impact-entry">',
+        "<div>",
+        '<p class="impact-name">' + escapeHtml(item.name || item.symbol || bi("未命名标的", "Unnamed line")) + "</p>",
+        '<p class="impact-meta">' + escapeHtml((item.category || bi("分类待补", "Category pending")) + " · " + formatSignedRatioPercent(item.ret_1d)) + "</p>",
+        "</div>",
+        '<div class="impact-value">' + escapeHtml(formatSignedCurrency(item.pnl_amount)) + "</div>",
+        "</article>"
+      ].join("");
+    }).join(""));
+  }
+
+  function renderCompactNewsLegacy(news) {
+    var items = safeArray(news.selected_news).slice(0, 8);
+    if (!items.length) {
+      renderEmpty(el.compactNewsList, bi("标题脉冲待就绪", "Headline pulse pending"), bi("新闻工件生成后，最新标题会在这里叠放显示。", "Latest headlines will stack here once the news artifact is ready."));
+      return;
+    }
+
+    setHTML(el.compactNewsList, items.map(function (item) {
+      var url = safeUrl(item.url);
+      return [
+        '<a class="compact-news-link" href="' + escapeHtml(url) + '" ' + (url !== "#" ? 'target="_blank" rel="noreferrer noopener"' : "") + ">",
+        "<strong>" + escapeHtml(item.title || bi("未命名标题", "Untitled headline")) + "</strong>",
+        "<span>" + escapeHtml((item.source || bi("来源待补", "Source pending")) + " · " + formatDateTime(item.published_at)) + "</span>",
+        "</a>"
+      ].join("");
+    }).join(""));
+  }
+
+  function parseReportDigest(messageText) {
+    var text = String(messageText || "").replace(/\r/g, "").trim();
+    if (!text) {
+      return { title: "", intro: [], sections: [] };
+    }
+
+    var blocks = text.split(/\n\s*\n+/).map(function (block) {
+      return block.trim();
+    }).filter(Boolean);
+
+    if (!blocks.length) {
+      return { title: "", intro: [], sections: [] };
+    }
+
+    var headLines = blocks.shift().split("\n").map(function (line) {
+      return line.trim();
+    }).filter(Boolean);
+
+    return {
+      title: headLines[0] || "",
+      intro: headLines.slice(1, 3),
+      sections: blocks.map(function (block, index) {
+        var lines = block.split("\n").map(function (line) {
+          return line.trim();
+        }).filter(Boolean);
+        if (!lines.length) {
+          return null;
+        }
+        return {
+          title: lines.length > 1 ? lines[0] : bi("阅读详情 " + String(index + 1), "Read more " + String(index + 1)),
+          rows: lines.length > 1 ? lines.slice(1) : lines
+        };
+      }).filter(Boolean)
+    };
+  }
+
+  function renderNewsBriefs(news) {
+    var cards = [];
+    var selectedNews = safeArray(news.selected_news).slice(0, 6);
+    var watchPoints = safeArray(news.watch_points).slice(0, 6);
+    var newsSummary = news.news_summary || {};
+    var reportDigest = parseReportDigest(news.message_text);
+
+    if (newsSummary.headline || safeArray(newsSummary.bullets).length) {
+      cards.push([
+        '<article class="news-card news-card--summary">',
+        '<p class="news-kicker">' + escapeHtml(newsSummary.mode === "openclaw" ? bi("OpenClaw 摘要", "OpenClaw brief") : bi("摘要", "Summary")) + "</p>",
+        newsSummary.headline ? '<p class="news-title">' + escapeHtml(newsSummary.headline) + "</p>" : "",
+        safeArray(newsSummary.bullets).length
+          ? '<ul class="note-list">' + safeArray(newsSummary.bullets).slice(0, 3).map(function (item) {
+            return "<li>" + escapeHtml(item) + "</li>";
+          }).join("") + "</ul>"
+          : "",
+        newsSummary.risk_note ? '<p class="news-meta">' + escapeHtml(newsSummary.risk_note) + "</p>" : "",
+        "</article>"
+      ].join(""));
+    }
+
+    if (reportDigest.title || reportDigest.sections.length) {
+      cards.push(buildReadingCardHTML({
+        kicker: bi("详细新闻报", "Detailed briefing"),
+        title: reportDigest.title || newsSummary.headline || bi("今日新闻报", "Daily news briefing"),
+        intro: reportDigest.intro,
+        sections: reportDigest.sections
+      }));
+    }
+
+    selectedNews.forEach(function (item) {
+      var url = safeUrl(item.url);
+      cards.push([
+        '<article class="news-card">',
+        '<p class="news-kicker">' + escapeHtml(bi("精选标题", "Selected headline")) + "</p>",
+        url !== "#"
+          ? '<a href="' + escapeHtml(url) + '" target="_blank" rel="noreferrer noopener">'
+          : "<div>",
+        '<p class="news-title">' + escapeHtml(item.title || bi("未命名标题", "Untitled headline")) + "</p>",
+        url !== "#" ? "</a>" : "</div>",
+        item.ai_summary ? '<p class="news-brief">' + escapeHtml(item.ai_summary) + "</p>" : "",
+        '<p class="news-meta">' + escapeHtml((item.source || bi("来源待补", "Source pending")) + " · " + formatDateTime(item.published_at)) + "</p>",
+        "</article>"
+      ].join(""));
+    });
+
+    if (watchPoints.length) {
+      cards.push([
+        '<article class="news-card">',
+        '<p class="news-kicker">' + escapeHtml(bi("观察点", "Watch points")) + "</p>",
+        '<ul class="note-list">',
+        watchPoints.map(function (item) {
+          return "<li>" + escapeHtml(item) + "</li>";
+        }).join(""),
+        "</ul>",
+        "</article>"
+      ].join(""));
+    }
+
+    if (!cards.length) {
+      renderEmpty(el.newsBriefList, bi("新闻流暂未就绪", "News stream not available yet"), bi("08:00 新闻推送完成后，精选标题和观察点会在这里出现。", "Selected headlines and watch points appear here after the 08:00 push."));
+      return;
+    }
+
+    setHTML(el.newsBriefList, cards.join(""));
+    syncReadingCardStates(el.newsBriefList);
+  }
+
+  function renderMorningDrivers(morning) {
+    var drivers = safeArray(morning.drivers).slice(0, 4);
+    var errors = toKeyValuePairs(morning.errors);
+    var reportDigest = parseReportDigest(morning.message_text);
+    var readingSections = reportDigest.sections.slice();
+    var items = [];
+
+    if (morning.ai_reference && morning.ai_reference.note) {
+      readingSections.unshift({
+        title: bi("AI 联动备注", "AI linkage note"),
+        rows: [morning.ai_reference.note]
+      });
+    }
+
+    if (drivers.length) {
+      readingSections.push({
+        title: bi("晨间核心驱动", "Core morning drivers"),
+        rows: drivers.slice(0, 3).map(function (item) {
+          return item.ai_summary || item.title || bi("未命名驱动", "Untitled driver");
+        })
+      });
+    }
+
+    if (reportDigest.title || reportDigest.intro.length || readingSections.length) {
+      items.push(buildReadingCardHTML({
+        kicker: bi("晨报长读", "Morning briefing"),
+        title: reportDigest.title || bi("交易日晨报", "Trading-day morning note"),
+        intro: reportDigest.intro,
+        sections: readingSections
+      }));
+    }
+
+    drivers.forEach(function (item) {
+      var url = safeUrl(item.url);
+      items.push([
+        '<article class="driver-item">',
+        '<div class="driver-copy">',
+        '<p class="driver-label">' + escapeHtml(bi("驱动", "Driver")) + "</p>",
+        url !== "#"
+          ? '<a class="driver-link" href="' + escapeHtml(url) + '" target="_blank" rel="noreferrer noopener"><p class="driver-title">' + escapeHtml(item.title || bi("未命名驱动", "Untitled driver")) + "</p></a>"
+          : '<p class="driver-title">' + escapeHtml(item.title || bi("未命名驱动", "Untitled driver")) + "</p>",
+        item.ai_summary ? '<p class="driver-brief">' + escapeHtml(item.ai_summary) + "</p>" : "",
+        '<p class="driver-meta">' + escapeHtml((item.source || bi("来源待补", "Source pending")) + " · " + formatDateTime(item.published_at)) + "</p>",
+        "</div>",
+        statusPillHTML(bi("实时", "Live"), "ready", true),
+        "</article>"
+      ].join(""));
+    });
+
+    errors.slice(0, 2).forEach(function (entry) {
+      items.push([
+        '<article class="driver-item">',
+        '<div class="driver-copy">',
+        '<p class="driver-label">' + escapeHtml(bi("覆盖备注", "Coverage note")) + "</p>",
+        '<p class="driver-title">' + escapeHtml(entry.key) + "</p>",
+        '<p class="driver-meta">' + escapeHtml(entry.value) + "</p>",
+        "</div>",
+        statusPillHTML(bi("源", "Source"), "warning", true),
+        "</article>"
+      ].join(""));
+    });
+
+    if (!items.length) {
+      renderEmpty(el.morningDriverList, bi("晨间驱动待就绪", "Morning drivers pending"), bi("晨报准备完成后，跨市场驱动与覆盖备注会在这里出现。", "Cross-market catalysts and coverage notes appear here when the morning payload is ready."));
+      return;
+    }
+
+    setHTML(el.morningDriverList, items.join(""));
+    syncReadingCardStates(el.morningDriverList);
+  }
+
+  function renderPortfolioPanel() {
+    var day = getDay();
+    var morning = day.content && day.content.morning || {};
+    var noon = day.content && day.content.noon || {};
+    var summary = noon.portfolio_summary || day.top_status && day.top_status.portfolio_summary || {};
+    var positions = getSortedPositions(noon);
+    var allocations = getAllocationRows(noon);
+    var overlapItems = buildOverlapItems(morning, positions);
+    var risk = computeRisk(positions);
+
+    if (el.portfolioPanelCopy) {
+      el.portfolioPanelCopy.textContent = bi("晨报重叠 " + overlapItems.length + " 个，当前为 " + risk.label + "，共 " + positions.length + " 个持仓。", "There are " + overlapItems.length + " overlaps with morning ideas, " + risk.label + " across " + positions.length + " holdings.");
+    }
+
+    if (el.portfolioMetricGrid) {
+      var metrics = [
+        metricCardHTML(bi("账户净值", "Account value"), formatCurrency(summary.portfolio_value), bi("当前 AI 模拟账户净值。", "Current simulated account value."), "neutral"),
+        metricCardHTML(bi("当日盈亏", "Daily PnL"), formatSignedCurrency(summary.daily_pnl_amount), formatSignedRatioPercent(summary.daily_pnl_pct), toneFromNumeric(summary.daily_pnl_amount)),
+        metricCardHTML(bi("换手规模", "Turnover"), formatCurrency(summary.turnover_amount), formatSignedRatioPercent(summary.turnover_pct) + " " + bi("占组合", "of portfolio"), toneFromNumeric(summary.turnover_pct)),
+        metricCardHTML(bi("持仓数量", "Holdings"), String(positions.length || asNumber(summary.holding_count) || 0), bi("当前 AI 模拟持仓数量。", "Current simulated positions."), "neutral"),
+        metricCardHTML(bi("重叠数量", "Overlap count"), String(overlapItems.length), bi("晨报优选与模拟仓的交集。", "Morning picks intersecting with the book."), overlapItems.length ? "positive" : "neutral"),
+        metricCardHTML(bi("风险姿态", "Risk posture"), risk.label, bi("最大单仓", "Largest line") + " " + formatRatioPercent(risk.largestPct) + " · " + bi("前三合计", "top three") + " " + formatRatioPercent(risk.topThreePct), risk.tone)
+      ];
+      setHTML(el.portfolioMetricGrid, metrics.join(""));
+    }
+
+    renderPortfolioPath(summary);
+    renderNoonBriefing(noon);
+    renderAllocationList(allocations);
+    renderRiskStrip(risk, overlapItems.length);
+    renderHoldingList(positions);
+    renderImpactList(el.contributorsList, safeArray(summary.top_contributors), bi("贡献项", "Contributors"));
+    renderImpactList(el.detractorsList, safeArray(summary.top_detractors), bi("拖累项", "Detractors"));
+  }
+
+  function renderCompactNews(news) {
+    var items = safeArray(news.selected_news).slice(0, 8);
+    if (!items.length) {
+      renderEmpty(el.compactNewsList, bi("标题脉冲待就绪", "Headline pulse pending"), bi("新闻工件生成后，最新标题会在这里叠放显示。", "Latest headlines will stack here once the news artifact is ready."));
+      return;
+    }
+
+    setHTML(el.compactNewsList, items.map(function (item) {
+      var url = safeUrl(item.url);
+      return [
+        '<a class="compact-news-link" href="' + escapeHtml(url) + '" ' + (url !== "#" ? 'target="_blank" rel="noreferrer noopener"' : "") + ">",
+        "<strong>" + escapeHtml(item.title || bi("未命名标题", "Untitled headline")) + "</strong>",
+        item.ai_summary ? '<span class="compact-news-copy">' + escapeHtml(item.ai_summary) + "</span>" : "",
+        "<span>" + escapeHtml((item.source || bi("来源待补", "Source pending")) + " · " + formatDateTime(item.published_at)) + "</span>",
+        "</a>"
+      ].join("");
+    }).join(""));
+  }
+
+  function renderNoonBriefing(noon) {
+    if (!el.noonReadingList) {
+      return;
+    }
+
+    var reportDigest = parseReportDigest(noon.message_text);
+    var aiSummary = noon.ai_summary || {};
+    var advice = safeArray(noon.advice).slice(0, 4);
+    var intro = reportDigest.intro.slice();
+    var sections = reportDigest.sections.slice();
+    var aiRows = [];
+
+    if (aiSummary.headline && intro.indexOf(aiSummary.headline) === -1) {
+      intro.unshift(aiSummary.headline);
+    }
+    aiRows = aiRows.concat(safeArray(aiSummary.bullets).slice(0, 4));
+    if (aiSummary.risk_note) {
+      aiRows.push(aiSummary.risk_note);
+    }
+    if (aiRows.length) {
+      sections.unshift({
+        title: bi("AI 摘要", "AI synopsis"),
+        rows: aiRows
+      });
+    }
+    if (advice.length) {
+      sections.push({
+        title: bi("组合建议", "Portfolio advice"),
+        rows: advice
+      });
+    }
+
+    if (!reportDigest.title && !intro.length && !sections.length && !aiSummary.headline) {
+      renderEmpty(el.noonReadingList, bi("午报长读待就绪", "Noon briefing pending"), bi("午间分析准备完成后，这里会出现 AI 总结与组合建议。", "The noon analysis, AI summary, and portfolio advice will appear here once generated."));
+      return;
+    }
+
+    setHTML(el.noonReadingList, buildReadingCardHTML({
+      kicker: bi("午报长读", "Noon briefing"),
+      title: reportDigest.title || aiSummary.headline || bi("AI 模拟持仓午报", "AI portfolio noon note"),
+      intro: intro.slice(0, 3),
+      sections: sections
+    }));
+    syncReadingCardStates(el.noonReadingList);
+  }
+
+  function buildReadingCardHTML(options) {
+    options = options || {};
+    var intro = safeArray(options.intro).map(normalizeReadingText).filter(Boolean).slice(0, 3);
+    var sections = safeArray(options.sections).map(function (section, index) {
+      return normalizeReadingSection(section, index);
+    }).filter(Boolean);
+    var copyText = buildReadingCopyText({
+      title: options.title,
+      intro: intro,
+      sections: sections
+    });
+    var className = ["news-card", "news-card--reading", options.className || ""].join(" ").trim();
+    var actions = [];
+
+    if (sections.length) {
+      actions.push('<button class="reading-action" type="button" data-reading-toggle aria-expanded="false">' + escapeHtml(bi("展开全部", "Expand all")) + "</button>");
+    }
+    if (copyText) {
+      actions.push('<button class="reading-action" type="button" data-reading-copy="' + escapeHtml(encodeDataPayload(copyText)) + '">' + escapeHtml(bi("复制摘要", "Copy summary")) + "</button>");
+    }
+
+    return [
+      '<article class="' + escapeHtml(className) + '" data-reading-card>',
+      '<div class="reading-head">',
+      '<div class="reading-head-copy">',
+      '<p class="news-kicker">' + escapeHtml(options.kicker || bi("长读卡片", "Reading card")) + "</p>",
+      options.title ? '<p class="news-title">' + escapeHtml(options.title) + "</p>" : "",
+      "</div>",
+      actions.length ? '<div class="reading-actions">' + actions.join("") + "</div>" : "",
+      "</div>",
+      intro.length
+        ? '<div class="reading-intro">' + intro.map(function (item) {
+          return "<p>" + escapeHtml(item) + "</p>";
+        }).join("") + "</div>"
+        : "",
+      sections.length
+        ? '<div class="reading-stack">' + sections.map(function (section, index) {
+          return [
+            '<details class="reading-section"' + (index === 0 ? " open" : "") + ">",
+            "<summary>" + escapeHtml(section.title) + "</summary>",
+            '<div class="reading-section-content">',
+            section.rows.length
+              ? '<ul class="reading-section-list">' + section.rows.map(function (item) {
+                return "<li>" + escapeHtml(item) + "</li>";
+              }).join("") + "</ul>"
+              : "",
+            "</div>",
+            "</details>"
+          ].join("");
+        }).join("") + "</div>"
+        : "",
+      "</article>"
+    ].join("");
+  }
+
+  function normalizeReadingSection(section, index) {
+    if (!section) {
+      return null;
+    }
+
+    var rows = safeArray(section.rows).map(normalizeReadingText).filter(Boolean);
+    var title = normalizeReadingText(section.title);
+    if (!title && !rows.length) {
+      return null;
+    }
+
+    return {
+      title: title || bi("阅读详情 " + String(index + 1), "Read more " + String(index + 1)),
+      rows: rows
+    };
+  }
+
+  function normalizeReadingText(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+  }
+
+  function buildReadingCopyText(options) {
+    options = options || {};
+    var lines = [];
+
+    if (normalizeReadingText(options.title)) {
+      lines.push(normalizeReadingText(options.title));
+    }
+
+    safeArray(options.intro).forEach(function (item) {
+      var normalized = normalizeReadingText(item);
+      if (normalized) {
+        lines.push(normalized);
+      }
+    });
+
+    safeArray(options.sections).forEach(function (section) {
+      if (!section) {
+        return;
+      }
+
+      var title = normalizeReadingText(section.title);
+      if (title) {
+        lines.push(title);
+      }
+
+      safeArray(section.rows).forEach(function (item) {
+        var normalized = normalizeReadingText(item);
+        if (normalized) {
+          lines.push("- " + normalized);
+        }
+      });
+    });
+
+    return lines.join("\n").trim();
+  }
+
+  function syncReadingCardStates(container) {
+    if (!container) {
+      return;
+    }
+
+    Array.prototype.forEach.call(container.querySelectorAll("[data-reading-card]"), function (card) {
+      syncReadingCardState(card);
+    });
+  }
+
+  function syncReadingCardState(card) {
+    if (!card) {
+      return;
+    }
+
+    var toggle = card.querySelector("[data-reading-toggle]");
+    if (!toggle) {
+      return;
+    }
+
+    var sections = Array.prototype.slice.call(card.querySelectorAll(".reading-section"));
+    var allOpen = sections.length && sections.every(function (section) {
+      return section.open;
+    });
+
+    toggle.textContent = allOpen ? bi("收起章节", "Collapse sections") : bi("展开全部", "Expand all");
+    toggle.setAttribute("aria-expanded", allOpen ? "true" : "false");
+    card.classList.toggle("is-expanded", !!allOpen);
+  }
+
+  function toggleReadingCard(button) {
+    var card = button && button.closest("[data-reading-card]");
+    if (!card) {
+      return;
+    }
+
+    var sections = Array.prototype.slice.call(card.querySelectorAll(".reading-section"));
+    if (!sections.length) {
+      return;
+    }
+
+    var shouldOpen = sections.some(function (section) {
+      return !section.open;
+    });
+    sections.forEach(function (section) {
+      section.open = shouldOpen;
+    });
+    syncReadingCardState(card);
+  }
+
+  function handleReadingCopy(button) {
+    var text = decodeDataPayload(button && button.getAttribute("data-reading-copy"));
+    if (!text) {
+      return;
+    }
+
+    copyTextToClipboard(text).then(function () {
+      showBanner(bi("阅读摘要已复制到剪贴板。", "Reading summary copied to clipboard."), "info");
+      window.setTimeout(clearBanner, 2200);
+    }).catch(function () {
+      showBanner(bi("复制失败，请手动选择文本。", "Copy failed. Please select the text manually."), "warning");
+    });
+  }
+
+  function encodeDataPayload(value) {
+    return encodeURIComponent(String(value || ""));
+  }
+
+  function decodeDataPayload(value) {
+    if (!value) {
+      return "";
+    }
+
+    try {
+      return decodeURIComponent(String(value));
+    } catch (_error) {
+      return String(value);
+    }
+  }
+
+  function copyTextToClipboard(text) {
+    var normalized = String(text || "").trim();
+    if (!normalized) {
+      return Promise.reject(new Error("empty_copy_text"));
+    }
+
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      return navigator.clipboard.writeText(normalized);
+    }
+
+    return new Promise(function (resolve, reject) {
+      var textarea = document.createElement("textarea");
+      textarea.value = normalized;
+      textarea.setAttribute("readonly", "readonly");
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      textarea.style.pointerEvents = "none";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+
+      try {
+        if (document.execCommand("copy")) {
+          document.body.removeChild(textarea);
+          resolve();
+          return;
+        }
+      } catch (error) {
+        document.body.removeChild(textarea);
+        reject(error);
+        return;
+      }
+
+      document.body.removeChild(textarea);
+      reject(new Error("copy_command_failed"));
+    });
+  }
+
+  function scheduleCanvasBalance() {
+    if (!el.canvasGrid) {
+      return;
+    }
+
+    if (appState.canvasBalanceFrame) {
+      window.cancelAnimationFrame(appState.canvasBalanceFrame);
+    }
+
+    appState.canvasBalanceFrame = window.requestAnimationFrame(function () {
+      appState.canvasBalanceFrame = null;
+      balanceCanvasCards();
+    });
+  }
+
+  function ensureCanvasColumns() {
+    if (!el.canvasGrid) {
+      return null;
+    }
+
+    var hero = el.canvasGrid.querySelector(".canvas-card--hero");
+    if (!hero) {
+      return null;
+    }
+
+    var primary = document.getElementById("canvas-column-primary");
+    var secondary = document.getElementById("canvas-column-secondary");
+
+    if (!primary) {
+      primary = document.createElement("div");
+      primary.id = "canvas-column-primary";
+      primary.className = "canvas-column";
+    }
+
+    if (!secondary) {
+      secondary = document.createElement("div");
+      secondary.id = "canvas-column-secondary";
+      secondary.className = "canvas-column";
+    }
+
+    hero.insertAdjacentElement("afterend", primary);
+    primary.insertAdjacentElement("afterend", secondary);
+
+    return {
+      hero: hero,
+      primary: primary,
+      secondary: secondary
+    };
+  }
+
+  function balanceCanvasCards() {
+    var columns = ensureCanvasColumns();
+    if (!columns) {
+      return;
+    }
+
+    var cards = Array.prototype.slice.call(el.canvasGrid.querySelectorAll(".canvas-card:not(.canvas-card--hero)"));
+    if (!cards.length) {
+      return;
+    }
+
+    cards.forEach(function (card, index) {
+      if (!card.getAttribute("data-canvas-order")) {
+        card.setAttribute("data-canvas-order", String(index + 1));
+      }
+    });
+
+    cards.sort(function (left, right) {
+      return (Number(left.getAttribute("data-canvas-order")) || 0) - (Number(right.getAttribute("data-canvas-order")) || 0);
+    });
+
+    var availableWidth = Math.max(el.canvasGrid.getBoundingClientRect().width || 0, el.canvasGrid.clientWidth || 0);
+    var shouldStack = window.matchMedia("(max-width: 980px)").matches || availableWidth < 980;
+    el.canvasGrid.classList.toggle("is-stacked", shouldStack);
+
+    if (shouldStack) {
+      cards.forEach(function (card) {
+        columns.primary.appendChild(card);
+      });
+      return;
+    }
+
+    var heights = [0, 0];
+    cards.forEach(function (card) {
+      var estimatedHeight = Math.max(card.getBoundingClientRect().height || 0, card.scrollHeight || 0, 220);
+      var targetIndex = heights[0] <= heights[1] ? 0 : 1;
+      var target = targetIndex === 0 ? columns.primary : columns.secondary;
+      target.appendChild(card);
+      heights[targetIndex] += estimatedHeight + 16;
+    });
+  }
+
+  function decorateFocusableCardsLegacy() {
+    var selector = [
+      ".canvas-card",
+      "#push-timeline",
+      "#workspace-reference-panel",
+      "#ai-portfolio-panel .subpanel",
+      ".live-card",
+      "#live-rail .subpanel"
+    ].join(",");
+
+    Array.prototype.forEach.call(document.querySelectorAll(selector), function (card) {
+      if (!card || card.querySelector(".focus-trigger")) {
+        return;
+      }
+
+      card.classList.add("focusable-card");
+      card.setAttribute("data-focus-label", resolveFocusLabel(card));
+
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "focus-trigger";
+      button.textContent = bi("聚焦", "Focus");
+      button.setAttribute("aria-label", bi("放大查看 ", "Open focus view for ") + resolveFocusLabel(card));
+      card.appendChild(button);
+    });
+  }
+
+  function decorateFocusableCards() {
+    var selector = [
+      ".canvas-card",
+      "#push-timeline",
+      "#workspace-reference-panel",
+      "#ai-portfolio-panel .subpanel",
+      ".live-card",
+      "#live-rail .subpanel"
+    ].join(",");
+
+    Array.prototype.forEach.call(document.querySelectorAll(selector), function (card) {
+      if (!card) {
+        return;
+      }
+
+      var label = resolveFocusLabel(card);
+      card.classList.add("focusable-card");
+      card.setAttribute("data-focus-ready", "true");
+      card.setAttribute("data-focus-label", label);
+      card.setAttribute("tabindex", "0");
+      card.setAttribute("aria-haspopup", "dialog");
+      card.setAttribute("aria-label", bi("鏀惧ぇ鏌ョ湅 ", "Open focus view for ") + label);
+    });
+  }
+
+  function resolveFocusLabel(card) {
+    if (!card) {
+      return bi("内容详情", "Detail view");
+    }
+
+    var heading = card.querySelector("h2, h3, .summary-market");
+    if (heading && heading.textContent.trim()) {
+      return clipText(heading.textContent.trim(), 90);
+    }
+
+    if (card.id === "push-timeline") {
+      return bi("多阶段推送", "Multi-stage pushes");
+    }
+    if (card.id === "workspace-reference-panel") {
+      return bi("叙事锚点", "Narrative anchors");
+    }
+
+    return bi("内容详情", "Detail view");
+  }
+
+  function resolveFocusKicker(card) {
+    if (!card) {
+      return bi("聚焦查看", "Focus view");
+    }
+
+    var kicker = card.querySelector(".panel-kicker, .status-label, .news-kicker, .driver-label");
+    if (kicker && kicker.textContent.trim()) {
+      return clipText(kicker.textContent.trim(), 72);
+    }
+
+    return bi("聚焦查看", "Focus view");
+  }
+
+  function openFocusView(card, trigger) {
+    if (!card || !el.focusOverlay || !el.focusShellBody || !el.focusShellTitle) {
+      return;
+    }
+
+    appState.focus.returnNode = trigger || document.activeElement;
+    appState.focus.activeLabel = resolveFocusLabel(card);
+
+    var clone = card.cloneNode(true);
+    sanitizeFocusClone(clone);
+    clone.classList.add("focus-shell-card");
+
+    el.focusShellBody.innerHTML = "";
+    el.focusShellBody.appendChild(clone);
+    if (el.focusShellKicker) {
+      el.focusShellKicker.textContent = resolveFocusKicker(card);
+    }
+    el.focusShellTitle.textContent = appState.focus.activeLabel;
+
+    el.focusOverlay.classList.remove("is-hidden");
+    window.requestAnimationFrame(function () {
+      el.focusOverlay.classList.add("is-active");
+      el.focusOverlay.setAttribute("aria-hidden", "false");
+      document.body.classList.add("focus-mode-open");
+      if (el.focusCloseButton) {
+        el.focusCloseButton.focus();
+      }
+    });
+  }
+
+  function closeFocusView() {
+    if (!el.focusOverlay || el.focusOverlay.classList.contains("is-hidden")) {
+      return;
+    }
+
+    el.focusOverlay.classList.remove("is-active");
+    el.focusOverlay.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("focus-mode-open");
+
+    window.setTimeout(function () {
+      if (!el.focusOverlay || el.focusOverlay.classList.contains("is-active")) {
+        return;
+      }
+      el.focusOverlay.classList.add("is-hidden");
+      if (el.focusShellBody) {
+        el.focusShellBody.innerHTML = "";
+      }
+    }, 220);
+
+    if (appState.focus.returnNode && typeof appState.focus.returnNode.focus === "function") {
+      appState.focus.returnNode.focus();
+    }
+  }
+
+  function sanitizeFocusCloneLegacy(node) {
+    if (!node) {
+      return;
+    }
+
+    if (node.removeAttribute) {
+      node.removeAttribute("id");
+      node.removeAttribute("data-focus-label");
+    }
+
+    Array.prototype.forEach.call(node.querySelectorAll("[id]"), function (item) {
+      item.removeAttribute("id");
+    });
+
+    Array.prototype.forEach.call(node.querySelectorAll(".focus-trigger"), function (item) {
+      item.remove();
+    });
+  }
+
+  function sanitizeFocusClone(node) {
+    if (!node) {
+      return;
+    }
+
+    if (node.removeAttribute) {
+      node.removeAttribute("id");
+      node.removeAttribute("data-focus-label");
+      node.removeAttribute("data-focus-ready");
+      node.removeAttribute("tabindex");
+      node.removeAttribute("aria-haspopup");
+      node.removeAttribute("aria-label");
+    }
+
+    if (node.classList) {
+      node.classList.remove("focusable-card");
+    }
+
+    Array.prototype.forEach.call(node.querySelectorAll("[id]"), function (item) {
+      item.removeAttribute("id");
+    });
+
+    Array.prototype.forEach.call(node.querySelectorAll("[data-focus-label], [data-focus-ready], [tabindex], [aria-haspopup], [aria-label]"), function (item) {
+      item.removeAttribute("data-focus-label");
+      item.removeAttribute("data-focus-ready");
+      item.removeAttribute("tabindex");
+      item.removeAttribute("aria-haspopup");
+      item.removeAttribute("aria-label");
+    });
+
+    Array.prototype.forEach.call(node.querySelectorAll(".focusable-card"), function (item) {
+      item.classList.remove("focusable-card");
+    });
+
+    Array.prototype.forEach.call(node.querySelectorAll(".focus-trigger"), function (item) {
+      item.remove();
+    });
+  }
+
+  function renderEmpty(container, title, message) {
+    if (!container) {
+      return;
+    }
+    setHTML(container, [
+      '<div class="empty-note">',
+      "<strong>" + escapeHtml(title) + "</strong>",
+      "<p>" + escapeHtml(message) + "</p>",
+      "</div>"
+    ].join(""));
+  }
+
+  function showBanner(message, tone) {
+    if (!el.stateBanner) {
+      return;
+    }
+    el.stateBanner.textContent = message;
+    el.stateBanner.className = "state-banner state-banner--" + (tone || "info");
+  }
+
+  function clearBanner() {
+    if (!el.stateBanner) {
+      return;
+    }
+    el.stateBanner.className = "state-banner is-hidden";
+    el.stateBanner.textContent = "";
+  }
+
+  function showGlobalState(kind, overrides) {
+    overrides = overrides || {};
+    if (kind === "authorized") {
+      hideGlobalState();
+      return;
+    }
+
+    var copyMap = {
+      loading: {
+        kicker: bi("金融分析工作台", "Finance dashboard"),
+        title: bi("正在加载工作台", "Loading workbench"),
+        message: bi("正在准备最新金融工作台。", "Preparing the latest finance workspace.")
+      },
+      unauthorized: {
+        kicker: bi("需要会话", "Session required"),
+        title: bi("请从今日 Telegram 链接进入", "Open from today's Telegram link"),
+        message: bi("只有当日私有链接成功建立会话 Cookie 后，工作台才会打开。", "This dashboard opens only after the current-day Telegram access link creates the finance session cookie.")
+      },
+      expired: {
+        kicker: bi("链接已失效", "Link expired"),
+        title: bi("私有链接已过期", "Access link has expired"),
+        message: bi("请重新打开今日 Telegram 链接，建立新的金融工作台会话。", "Open the current-day Telegram link again to create a fresh finance session.")
+      },
+      empty: {
+        kicker: bi("快照缺失", "Snapshot missing"),
+        title: bi("金融快照尚未生成", "No finance snapshot available yet"),
+        message: bi("所请求的历史日期或推送阶段还没有生成。", "The requested archive day or push stage has not been generated.")
+      },
+      error: {
+        kicker: bi("工作台不可用", "Dashboard unavailable"),
+        title: bi("暂时无法载入金融数据", "Unable to load finance data"),
+        message: bi("待金融接口恢复后再重试。", "Retry once the finance APIs are available.")
+      }
+    };
+
+    var selected = copyMap[kind] || copyMap.error;
+    if (!el.globalState) {
+      return;
+    }
+
+    el.globalStateKicker.textContent = overrides.kicker || selected.kicker;
+    el.globalStateTitle.textContent = overrides.title || selected.title;
+    el.globalStateMessage.textContent = overrides.message || selected.message;
+    el.globalState.classList.remove("is-hidden");
+  }
+
+  function hideGlobalState() {
+    if (el.globalState) {
+      el.globalState.classList.add("is-hidden");
+    }
+  }
+
+  function updateRefreshHealth() {
+    if (!el.refreshHealthPill) {
+      return;
+    }
+
+    var tone = "positive";
+    var text = bi("自动刷新", "Auto-refresh") + " " + String(appState.lastStatus && appState.lastStatus.recommended_poll_seconds || appState.recommendedPollSeconds || 60) + "s";
+
+    if (appState.mode === "archive") {
+      tone = "neutral";
+      text = bi("历史回放已固定", "Archive pinned");
+    }
+
+    if (appState.lastError) {
+      tone = "warning";
+      text = bi("当前显示旧快照", "Showing stale snapshot");
+    }
+
+    setElementTone(el.refreshHealthPill, "hero-chip", tone);
+    el.refreshHealthPill.textContent = text;
+  }
+
+  function setElementTone(node, baseClass, tone) {
+    if (!node) {
+      return;
+    }
+    node.className = baseClass + " " + toneClassName(tone);
+  }
+
+  function updateFilterButtons() {
+    updateButtonGroup(el.stageFilterGroup, "data-stage-filter", appState.filters.stage);
+    updateButtonGroup(el.marketFilterGroup, "data-market-filter", appState.filters.market);
+  }
+
+  function updateButtonGroup(container, attribute, value) {
+    if (!container) {
+      return;
+    }
+
+    Array.prototype.forEach.call(container.querySelectorAll("[" + attribute + "]"), function (button) {
+      button.classList.toggle("is-active", button.getAttribute(attribute) === value);
+    });
+  }
+
+  function getDay() {
+    if (appState.payload && appState.payload.day) {
+      return appState.payload.day;
+    }
+    if (appState.lastGoodPayload && appState.lastGoodPayload.day) {
+      return appState.lastGoodPayload.day;
+    }
+    return {};
+  }
+
+  function getLatestDate() {
+    return getDay().date || appState.availableDates[0] || "";
+  }
+
+  function getRequestedState() {
+    var params = new URL(window.location.href).searchParams;
+    var stateFromQuery = params.get("state");
+    var stateFromBody = body.dataset.pageState || "authorized";
+    var allowed = ["authorized", "loading", "unauthorized", "expired", "empty", "error"];
+
+    if (allowed.indexOf(stateFromQuery) !== -1) {
+      return stateFromQuery;
+    }
+
+    if (allowed.indexOf(stateFromBody) !== -1) {
+      return stateFromBody;
+    }
+
+    return "authorized";
+  }
+
+  function syncUrl() {
+    var url = new URL(window.location.href);
+    if (appState.mode === "archive" && appState.selectedDate && appState.selectedDate !== getLatestDate()) {
+      url.searchParams.set("date", appState.selectedDate);
+    } else {
+      url.searchParams.delete("date");
+    }
+    url.searchParams.delete("state");
+    window.history.replaceState({}, "", url.pathname + url.search);
+  }
+
+  function getPollSeconds(payload) {
+    return payload && payload.day && payload.day.refresh && asNumber(payload.day.refresh.recommended_poll_seconds) || 60;
+  }
+
+  function getStageMeta() {
+    var day = getDay();
+    var content = day.content || {};
+    var topStatus = day.top_status && day.top_status.pushes || {};
+    var liveStatus = appState.lastStatus && appState.lastStatus.pushes || {};
+    var result = {};
+
+    STAGES.forEach(function (stage) {
+      var stageContent = content[stage] || {};
+      var top = topStatus[stage] || {};
+      var live = liveStatus[stage] || {};
+      result[stage] = {
+        status: live.status || top.status || stageContent.status || (stage === "health" ? "not_triggered" : "pending"),
+        generated_at: top.generated_at || stageContent.generated_at || "",
+        telegram_delivery: top.telegram_delivery || stageContent.telegram_delivery || {}
+      };
+    });
+
+    return result;
+  }
+
+  function getVisibleMarketKeys(markets) {
+    var available = MARKETS.filter(function (key) {
+      return markets && markets[key];
+    });
+
+    if (appState.filters.market !== "ALL") {
+      return available.indexOf(appState.filters.market) !== -1 ? [appState.filters.market] : [];
+    }
+
+    return available;
+  }
+
+  function getMarketSummary(morning, market) {
+    var markets = morning && morning.markets || {};
+    return markets[market] || {};
+  }
+
+  function getSortedPositions(noon) {
+    return safeArray(noon.positions).slice().sort(function (left, right) {
+      return (asNumber(right.portfolio_pct) || 0) - (asNumber(left.portfolio_pct) || 0);
+    });
+  }
+
+  function getAllocationRows(noon) {
+    var allocations = safeArray(noon.allocations).map(function (item) {
+      return {
+        key: item.key,
+        name: item.name || item.key,
+        category_pct: asNumber(item.category_pct) || 0,
+        category_amount: asNumber(item.category_amount)
+      };
+    });
+
+    if (allocations.length) {
+      return allocations.sort(function (left, right) {
+        return right.category_pct - left.category_pct;
+      });
+    }
+
+    var grouped = {};
+    safeArray(noon.positions).forEach(function (item) {
+      var key = item.category || "Other";
+      if (!grouped[key]) {
+        grouped[key] = {
+          key: key,
+          name: key,
+          category_pct: 0
+        };
+      }
+      grouped[key].category_pct += asNumber(item.portfolio_pct) || 0;
+    });
+
+    return Object.keys(grouped).map(function (key) {
+      return grouped[key];
+    }).sort(function (left, right) {
+      return right.category_pct - left.category_pct;
+    });
+  }
+
+  function buildOverlapItems(morning, positions) {
+    var explicit = safeArray(morning.ai_reference && morning.ai_reference.overlap_picks);
+    var positionMap = {};
+
+    positions.forEach(function (item) {
+      positionMap[normalizeSymbol(item.symbol)] = item;
+    });
+
+    if (explicit.length) {
+      return explicit.map(function (item) {
+        return {
+          market: item.market,
+          symbol: item.symbol,
+          display_symbol: item.display_symbol,
+          name: item.name,
+          held: !!positionMap[normalizeSymbol(item.symbol)],
+          note: positionMap[normalizeSymbol(item.symbol)] ? bi("已在 AI 模拟持仓中。", "Already held in the simulated portfolio.") : bi("晨报参考标的。", "Morning reference idea.")
+        };
+      });
+    }
+
+    return collectMorningPicks(morning).filter(function (item) {
+      return !!positionMap[normalizeSymbol(item.symbol)];
+    }).map(function (item) {
+      return {
+        market: item.market,
+        symbol: item.symbol,
+        display_symbol: item.display_symbol,
+        name: item.name,
+        held: true,
+        note: bi("根据晨报优选与午间持仓的同名标的推导。", "Derived from shared symbols between morning picks and noon positions.")
+      };
+    });
+  }
+
+  function collectMorningPicks(morning) {
+    var results = [];
+    var markets = morning.markets 

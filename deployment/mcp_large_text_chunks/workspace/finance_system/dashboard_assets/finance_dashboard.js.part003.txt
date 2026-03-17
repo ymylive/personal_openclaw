@@ -1,0 +1,592 @@
+|| {};
+
+    MARKETS.forEach(function (market) {
+      safeArray(markets[market] && markets[market].picks).forEach(function (item) {
+        results.push({
+          market: market,
+          symbol: item.symbol,
+          display_symbol: item.display_symbol,
+          name: item.name
+        });
+      });
+    });
+
+    return results;
+  }
+
+  function computeRisk(positions) {
+    var largestPct = positions.length ? asNumber(positions[0].portfolio_pct) || 0 : 0;
+    var topThreePct = positions.slice(0, 3).reduce(function (sum, item) {
+      return sum + (asNumber(item.portfolio_pct) || 0);
+    }, 0);
+
+    if (largestPct >= 30 || topThreePct >= 60) {
+      return {
+        largestPct: largestPct,
+        topThreePct: topThreePct,
+        label: bi("高集中", "High concentration"),
+        tone: "negative"
+      };
+    }
+
+    if (largestPct >= 20 || topThreePct >= 45) {
+      return {
+        largestPct: largestPct,
+        topThreePct: topThreePct,
+        label: bi("中等集中", "Moderate concentration"),
+        tone: "warning"
+      };
+    }
+
+    return {
+      largestPct: largestPct,
+      topThreePct: topThreePct,
+      label: bi("相对均衡", "Balanced book"),
+      tone: "positive"
+    };
+  }
+
+  function buildStageHighlights(stage, stageContent, day) {
+    var items = [];
+
+    if (stage === "news") {
+      items = items.concat(safeArray((stageContent.news_summary || {}).bullets).slice(0, 3));
+      if (!items.length) {
+        safeArray(stageContent.selected_news).slice(0, 2).forEach(function (item) {
+          items.push(item.ai_summary || item.title);
+        });
+      }
+      if (!items.length) {
+        items = items.concat(safeArray(stageContent.watch_points).slice(0, 2));
+      }
+    } else if (stage === "morning") {
+      var marketCount = getVisibleMarketKeys(stageContent.markets || {}).reduce(function (sum, key) {
+        return sum + (asNumber(stageContent.markets[key] && stageContent.markets[key].candidate_count) || 0);
+      }, 0);
+      var overlapCount = buildOverlapItems(stageContent, getSortedPositions(day.content && day.content.noon || {})).length;
+      if (marketCount) {
+        items.push(
+          bi(
+            "扫描 " + formatNumber(marketCount) + " 个候选，与模拟仓重叠 " + String(overlapCount) + " 个。",
+            "Scanned " + formatNumber(marketCount) + " candidates with " + String(overlapCount) + " simulated-book overlaps."
+          )
+        );
+      }
+      safeArray(stageContent.drivers).slice(0, 2).forEach(function (item) {
+        items.push(item.ai_summary || item.title);
+      });
+      if (stageContent.ai_reference && stageContent.ai_reference.note) {
+        items.push(stageContent.ai_reference.note);
+      }
+    } else if (stage === "noon") {
+      items = items.concat(safeArray((stageContent.ai_summary || {}).bullets).slice(0, 3));
+      if (stageContent.ai_summary && stageContent.ai_summary.risk_note) {
+        items.push(stageContent.ai_summary.risk_note);
+      }
+      if (!items.length) {
+        items = items.concat(safeArray(stageContent.advice).slice(0, 3));
+      }
+    } else {
+      items = items.concat(safeArray(stageContent.issues).slice(0, 3));
+    }
+
+    var seen = {};
+    return items.map(function (item) {
+      return clipText(item, 120);
+    }).filter(function (item) {
+      var key = String(item || "").trim();
+      if (!key || seen[key]) {
+        return false;
+      }
+      seen[key] = true;
+      return true;
+    }).slice(0, 3);
+  }
+
+  function summarizeStage(stage, stageContent, day) {
+    if (stage === "news") {
+      return (stageContent.news_summary && stageContent.news_summary.headline)
+        || (safeArray(stageContent.selected_news)[0] && (safeArray(stageContent.selected_news)[0].ai_summary || safeArray(stageContent.selected_news)[0].title))
+        || safeArray(stageContent.watch_points)[0]
+        || clipText(stageContent.message_text, 150)
+        || bi("新闻阶段暂未就绪。", "News stage is not available yet.");
+    }
+
+    if (stage === "morning") {
+      var firstDriver = safeArray(stageContent.drivers)[0];
+      if (firstDriver && (firstDriver.ai_summary || firstDriver.title)) {
+        return firstDriver.ai_summary || clipText(firstDriver.title, 120);
+      }
+      var marketCount = getVisibleMarketKeys(stageContent.markets || {}).reduce(function (sum, key) {
+        return sum + (asNumber(stageContent.markets[key] && stageContent.markets[key].candidate_count) || 0);
+      }, 0);
+      var overlapCount = buildOverlapItems(stageContent, getSortedPositions(day.content && day.content.noon || {})).length;
+      return marketCount
+        ? bi("可见市场共筛出 " + String(marketCount) + " 个候选，和模拟仓有 " + String(overlapCount) + " 个重叠。", String(marketCount) + " candidates across visible markets with " + String(overlapCount) + " portfolio overlaps.")
+        : stageContent.ai_reference && stageContent.ai_reference.note
+          || clipText(stageContent.message_text, 150)
+          || bi("晨报阶段暂未就绪。", "Morning stage is not available yet.");
+    }
+
+    if (stage === "noon") {
+      if (stageContent.ai_summary && stageContent.ai_summary.headline) {
+        return stageContent.ai_summary.headline;
+      }
+      var summary = stageContent.portfolio_summary || {};
+      var value = asNumber(summary.portfolio_value);
+      return value !== null
+        ? bi("组合净值 " + formatCurrency(value) + "，当日变动 " + formatSignedRatioPercent(summary.daily_pnl_pct) + "。", "Portfolio at " + formatCurrency(value) + " with " + formatSignedRatioPercent(summary.daily_pnl_pct) + " daily change.")
+        : safeArray(stageContent.advice)[0]
+          || clipText(stageContent.message_text, 150)
+          || bi("午报阶段暂未就绪。", "Noon stage is not available yet.");
+    }
+
+    var severity = stageContent.severity || inferHealthSeverity(stageContent);
+    return severity !== "none"
+      ? prettySeverity(severity) + " " + bi("健康状态", "health state") + ": " + (safeArray(stageContent.issues)[0] || bi("检测到覆盖异常。", "Coverage issue detected."))
+      : bi("当前没有活跃的数据源健康告警。", "No active source-health warnings.");
+  }
+
+  function inferHealthSeverity(health) {
+    if (health.severity) {
+      return health.severity;
+    }
+    if (safeArray(health.critical_issues).length) {
+      return "critical";
+    }
+    if (safeArray(health.warning_issues).length || safeArray(health.issues).length) {
+      return "warning";
+    }
+    return "none";
+  }
+
+  function buildSparklineSVG(values, labels) {
+    var width = 320;
+    var height = 140;
+    var paddingX = 16;
+    var paddingY = 18;
+    var minValue = Math.min.apply(Math, values);
+    var maxValue = Math.max.apply(Math, values);
+    var range = maxValue - minValue || 1;
+    var innerWidth = width - (paddingX * 2);
+    var innerHeight = height - (paddingY * 2);
+    var points = values.map(function (value, index) {
+      var x = paddingX + ((innerWidth / Math.max(values.length - 1, 1)) * index);
+      var y = paddingY + (innerHeight - (((value - minValue) / range) * innerHeight));
+      return { x: x, y: y, value: value };
+    });
+
+    var linePath = points.map(function (point, index) {
+      return (index ? "L" : "M") + point.x.toFixed(2) + "," + point.y.toFixed(2);
+    }).join(" ");
+
+    var areaPath = linePath + " L" + points[points.length - 1].x.toFixed(2) + "," + (height - paddingY).toFixed(2) + " L" + points[0].x.toFixed(2) + "," + (height - paddingY).toFixed(2) + " Z";
+    var gridLines = [0.2, 0.5, 0.8].map(function (ratio) {
+      var y = paddingY + (innerHeight * ratio);
+      return '<line class="sparkline-grid-line" x1="' + paddingX + '" x2="' + (width - paddingX) + '" y1="' + y.toFixed(2) + '" y2="' + y.toFixed(2) + '"></line>';
+    }).join("");
+
+    var pointNodes = points.map(function (point, index) {
+      return [
+        '<circle class="sparkline-point" cx="' + point.x.toFixed(2) + '" cy="' + point.y.toFixed(2) + '" r="4"></circle>',
+        '<text class="sparkline-label" x="' + point.x.toFixed(2) + '" y="' + (height - 6).toFixed(2) + '" text-anchor="middle">' + escapeHtml(labels[index] || "") + "</text>"
+      ].join("");
+    }).join("");
+
+    return [
+      '<svg viewBox="0 0 ' + width + " " + height + '" role="img" aria-label="' + escapeHtml(bi("会话净值路径", "Portfolio session path")) + '">',
+      gridLines,
+      '<path class="sparkline-area" d="' + areaPath + '"></path>',
+      '<path class="sparkline-line" d="' + linePath + '"></path>',
+      pointNodes,
+      "</svg>"
+    ].join("");
+  }
+
+  function stageDeliveryHTML(delivery) {
+    if (!delivery || !delivery.status) {
+      return "";
+    }
+    return '<p class="timeline-card-meta">' + escapeHtml(bi("Telegram 投递", "Telegram delivery")) + ' · ' + escapeHtml(prettyStageStatus(delivery.status)) + '</p>';
+  }
+
+  function statusPillHTML(label, status, compact) {
+    var tone = toneClassName(statusTone(status));
+    return [
+      '<span class="status-pill ' + tone + (compact ? " status-pill--compact" : "") + '">',
+      '<span class="status-pill__dot" aria-hidden="true"></span>',
+      "<span>" + escapeHtml(label) + "</span>",
+      "</span>"
+    ].join("");
+  }
+
+  function miniStatHTML(label, value) {
+    return [
+      '<div class="mini-stat">',
+      '<p class="status-label">' + escapeHtml(label) + "</p>",
+      "<strong>" + escapeHtml(value) + "</strong>",
+      "</div>"
+    ].join("");
+  }
+
+  function metricCardHTML(label, value, meta, tone) {
+    return [
+      '<article class="metric-card ' + toneClassName(tone) + '">',
+      '<p class="metric-label">' + escapeHtml(label) + "</p>",
+      '<p class="metric-value">' + escapeHtml(value) + "</p>",
+      '<p class="metric-meta">' + escapeHtml(meta) + "</p>",
+      "</article>"
+    ].join("");
+  }
+
+  function riskChipHTML(label, value, meta) {
+    return [
+      '<div class="risk-chip">',
+      '<span class="status-label">' + escapeHtml(label) + "</span>",
+      "<strong>" + escapeHtml(value) + "</strong>",
+      '<p class="status-meta">' + escapeHtml(meta) + "</p>",
+      "</div>"
+    ].join("");
+  }
+
+  function summaryRowHTML(label, value) {
+    return [
+      '<div class="summary-row">',
+      "<span>" + escapeHtml(label) + "</span>",
+      "<strong>" + escapeHtml(value) + "</strong>",
+      "</div>"
+    ].join("");
+  }
+
+  function buildSegment(width, className) {
+    if (!width) {
+      return "";
+    }
+    return '<span class="stacked-segment ' + className + '" style="width:' + escapeHtml(width.toFixed(2)) + '%"></span>';
+  }
+
+  function setHTML(node, html) {
+    if (node) {
+      node.innerHTML = html;
+    }
+  }
+
+  function safeArray(value) {
+    return Array.isArray(value) ? value : [];
+  }
+
+  function toKeyValuePairs(record) {
+    if (!record || typeof record !== "object") {
+      return [];
+    }
+
+    return Object.keys(record).map(function (key) {
+      return {
+        key: key,
+        value: String(record[key])
+      };
+    });
+  }
+
+  function uniqueDates(values) {
+    var filtered = values.filter(Boolean);
+    var map = {};
+    filtered.forEach(function (value) {
+      map[value] = true;
+    });
+
+    return Object.keys(map).sort(function (left, right) {
+      return left < right ? 1 : -1;
+    });
+  }
+
+  function escapeHtml(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function safeUrl(value) {
+    var text = String(value || "");
+    return /^https?:\/\//i.test(text) ? text : "#";
+  }
+
+  function clipText(value, limit) {
+    var text = String(value || "").trim();
+    if (!text) {
+      return "";
+    }
+    return text.length > limit ? text.slice(0, limit - 1) + "…" : text;
+  }
+
+  function asNumber(value) {
+    var number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function toneFromNumeric(value) {
+    var number = asNumber(value);
+    if (number === null || number === 0) {
+      return "neutral";
+    }
+    return number > 0 ? "positive" : "negative";
+  }
+
+  function toneClassName(tone) {
+    var key = tone || "neutral";
+    if (key === "ready" || key === "positive") {
+      return "tone-positive";
+    }
+    if (key === "pending" || key === "warning") {
+      return "tone-warning";
+    }
+    if (key === "failed" || key === "negative") {
+      return "tone-negative";
+    }
+    if (key === "critical") {
+      return "tone-critical";
+    }
+    return "tone-neutral";
+  }
+
+  function statusTone(status) {
+    var value = String(status || "").toLowerCase();
+    if (value === "ready" || value === "sent") {
+      return "ready";
+    }
+    if (value === "failed") {
+      return "failed";
+    }
+    if (value === "critical") {
+      return "critical";
+    }
+    if (value === "warning") {
+      return "warning";
+    }
+    if (value === "skipped" || value === "not_triggered") {
+      return "neutral";
+    }
+    return "pending";
+  }
+
+  function prettyStageStatus(status) {
+    var value = String(status || "").toLowerCase();
+    var labels = {
+      pending: bi("待执行", "Pending"),
+      ready: bi("就绪", "Ready"),
+      sent: bi("已发送", "Sent"),
+      failed: bi("失败", "Failed"),
+      warning: bi("警示", "Warning"),
+      critical: bi("严重", "Critical"),
+      skipped: bi("跳过", "Skipped"),
+      not_triggered: bi("未触发", "Not triggered")
+    };
+    return labels[value] || bi("待执行", "Pending");
+  }
+
+  function prettySeverity(severity) {
+    var value = String(severity || "none").toLowerCase();
+    var labels = {
+      none: bi("正常", "Normal"),
+      warning: bi("警示", "Warning"),
+      critical: bi("严重", "Critical")
+    };
+    return labels[value] || bi("正常", "Normal");
+  }
+
+  function marketDisplayName(market) {
+    if (market === "A") {
+      return bi("A 股", "A-Share");
+    }
+    if (market === "HK") {
+      return bi("港股", "Hong Kong");
+    }
+    if (market === "US") {
+      return bi("美股", "US");
+    }
+    return String(market || "");
+  }
+
+  function marketToneLabel(market) {
+    if (market === "A" || market === "HK" || market === "US") {
+      return market;
+    }
+    return String(market || "");
+  }
+
+  function prettyAccessMode(mode) {
+    var value = String(mode || "daily_key_to_cookie").toLowerCase();
+    if (value === "daily_key_to_cookie") {
+      return bi("日密钥转会话", "Daily key to session");
+    }
+    return value.replace(/_/g, " ");
+  }
+
+  function breadthLabel(breadth) {
+    breadth = breadth || {};
+    var up = asNumber(breadth.up) || 0;
+    var down = asNumber(breadth.down) || 0;
+    var flat = asNumber(breadth.flat) || 0;
+    return up + " " + bi("涨", "up") + " / " + flat + " " + bi("平", "flat") + " / " + down + " " + bi("跌", "down");
+  }
+
+  function marketRowLabel(item) {
+    if (!item) {
+      return bi("暂未就绪", "Not ready");
+    }
+    var label = item.display_symbol || item.symbol || item.name || bi("标的", "Instrument");
+    var pct = asNumber(item.pct_chg);
+    return pct === null ? label : label + " " + formatSignedPercent(pct);
+  }
+
+  function normalizeSymbol(value) {
+    return String(value || "").replace(/\s+/g, "").toUpperCase();
+  }
+
+  function scaleRatioPercent(value) {
+    var number = asNumber(value);
+    if (number === null || number <= 0) {
+      return 0;
+    }
+    return Math.max(4, Math.min(100, number * 100));
+  }
+
+  function formatRatioPercent(value) {
+    var number = asNumber(value);
+    if (number === null) {
+      return "n/a";
+    }
+    var percent = number * 100;
+    return percent.toFixed(Math.abs(percent) >= 10 ? 1 : 2) + "%";
+  }
+
+  function formatSignedRatioPercent(value) {
+    var number = asNumber(value);
+    if (number === null) {
+      return "n/a";
+    }
+    var percent = number * 100;
+    var sign = percent > 0 ? "+" : "";
+    return sign + percent.toFixed(Math.abs(percent) >= 10 ? 1 : 2) + "%";
+  }
+
+  function isStageVisible(stage) {
+    return appState.filters.stage === "all" || appState.filters.stage === stage;
+  }
+
+  function isLater(left, right) {
+    var leftTime = Date.parse(left || "");
+    var rightTime = Date.parse(right || "");
+    if (!Number.isFinite(leftTime)) {
+      return false;
+    }
+    if (!Number.isFinite(rightTime)) {
+      return true;
+    }
+    return leftTime > rightTime;
+  }
+
+  function parseDateForZone(value) {
+    if (!value) {
+      return null;
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return new Date(value + "T00:00:00+08:00");
+    }
+    return new Date(value);
+  }
+
+  function formatDateLabel(value) {
+    var date = parseDateForZone(value);
+    if (!date || Number.isNaN(date.getTime())) {
+      return bi("暂未就绪", "Not ready");
+    }
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: APP_TIME_ZONE,
+      month: "short",
+      day: "numeric",
+      year: "numeric"
+    }).format(date);
+  }
+
+  function formatDateTime(value) {
+    var date = parseDateForZone(value);
+    if (!date || Number.isNaN(date.getTime())) {
+      return bi("暂未就绪", "Not ready");
+    }
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: APP_TIME_ZONE,
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).format(date);
+  }
+
+  function formatTime(value) {
+    var date = parseDateForZone(value);
+    if (!date || Number.isNaN(date.getTime())) {
+      return bi("暂未就绪", "Not ready");
+    }
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: APP_TIME_ZONE,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).format(date);
+  }
+
+  function formatNumber(value) {
+    var number = asNumber(value);
+    if (number === null) {
+      return "0";
+    }
+    return new Intl.NumberFormat("en-US", {
+      maximumFractionDigits: 0
+    }).format(number);
+  }
+
+  function formatPercent(value) {
+    var number = asNumber(value);
+    if (number === null) {
+      return "n/a";
+    }
+    return number.toFixed(Math.abs(number) >= 10 ? 1 : 2) + "%";
+  }
+
+  function formatSignedPercent(value) {
+    var number = asNumber(value);
+    if (number === null) {
+      return "n/a";
+    }
+    var sign = number > 0 ? "+" : "";
+    return sign + number.toFixed(Math.abs(number) >= 10 ? 1 : 2) + "%";
+  }
+
+  function formatCurrency(value) {
+    var number = asNumber(value);
+    if (number === null) {
+      return bi("暂未就绪", "Not ready");
+    }
+    var digits = Math.abs(number) < 100 ? 2 : 0;
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      maximumFractionDigits: digits,
+      minimumFractionDigits: digits
+    }).format(number);
+  }
+
+  function formatSignedCurrency(value) {
+    var number = asNumber(value);
+    if (number === null) {
+      return "n/a";
+    }
+    var sign = number > 0 ? "+" : "";
+    return sign + formatCurrency(number);
+  }
+}());
