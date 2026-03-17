@@ -1,0 +1,9 @@
+{
+  "groups": [
+    {
+      "group_id": 1000000000,
+      "group_name": "Example Group",
+      "reason": "Messages from this group should be ignored"
+    }
+  ]
+}
