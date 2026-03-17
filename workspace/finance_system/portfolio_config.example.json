@@ -1,0 +1,51 @@
+{
+  "initial_capital": 1000000,
+  "categories": [
+    {
+      "key": "us_equities",
+      "name": "US Equities",
+      "allocation_pct": 30,
+      "symbols": [
+        { "symbol": "SPY", "name": "S&P 500 ETF" },
+        { "symbol": "QQQ", "name": "Nasdaq 100 ETF" },
+        { "symbol": "NVDA", "name": "NVIDIA" }
+      ]
+    },
+    {
+      "key": "hk_equities",
+      "name": "HK Equities",
+      "allocation_pct": 20,
+      "symbols": [
+        { "symbol": "0700.HK", "name": "Tencent" },
+        { "symbol": "9988.HK", "name": "Alibaba" }
+      ]
+    },
+    {
+      "key": "a_equities",
+      "name": "A Shares",
+      "allocation_pct": 20,
+      "symbols": [
+        { "symbol": "600519.SS", "name": "Kweichow Moutai" },
+        { "symbol": "510300.SS", "name": "CSI 300 ETF" }
+      ]
+    },
+    {
+      "key": "crypto",
+      "name": "Crypto",
+      "allocation_pct": 15,
+      "symbols": [
+        { "symbol": "BTC-USD", "name": "Bitcoin" },
+        { "symbol": "ETH-USD", "name": "Ethereum" }
+      ]
+    },
+    {
+      "key": "metals",
+      "name": "Precious Metals",
+      "allocation_pct": 15,
+      "symbols": [
+        { "symbol": "GC=F", "name": "Gold Futures" },
+        { "symbol": "GLD", "name": "Gold ETF" }
+      ]
+    }
+  ]
+}

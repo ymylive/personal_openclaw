@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OpenClaw 金融分析工作台 / Finance Dashboard</title>
+    <meta
+      name="description"
+      content="OpenClaw 金融分析工作台，展示最新与历史市场分析、AI 模拟持仓联动，以及推送状态。 OpenClaw finance dashboard for latest and archive market analysis, AI simulated portfolio linkage, and delivery status."
+    >
+    <link rel="stylesheet" href="/finance/assets/finance_dashboard.css?v=20260316m">
+  </head>
+  <body
+    data-bootstrap-url="/finance/api/bootstrap"
+    data-status-url="/finance/api/status"
+    data-history-url="/finance/api/history-index"
+    data-archive-base="/finance/api/archive/"
+    data-page-state="authorized"
+  >
+    <div class="page-shell">
+      <header class="hero-shell" aria-label="金融分析工作台头部 / Finance dashboard header">
+        <div class="hero-copy">
+          <p class="eyebrow">OpenClaw Finance / OpenClaw 金融工作台</p>
+          <h1>金融分析工作台 / Finance Analysis Workbench</h1>
+          <p class="hero-deck" id="hero-deck">
+            面向 A 股、港股、美股的每日分析工作台，集中查看最新市场脉络、历史回放与 AI 模拟持仓联动。
+          </p>
+        </div>
+        <div class="hero-actions" aria-label="工作台操作 / Dashboard actions">
+          <div class="hero-chip hero-chip--navy" id="workspace-mode-pill">最新工作台 / Latest workspace</div>
+          <div class="hero-chip" id="refresh-health-pill">等待数据 / Waiting for data</div>
+          <button class="ghost-button" id="latest-button" type="button">最新视图 / Latest</button>
+          <button class="primary-button" id="refresh-button" type="button">立即刷新 / Refresh</button>
+        </div>
+      </header>
+
+      <section class="state-banner is-hidden" id="state-banner" aria-live="polite"></section>
+
+      <section class="top-status-strip" id="top-status-strip" aria-label="顶部状态区 / Top status strip">
+        <article class="status-card">
+          <p class="status-label">交易日 / Trading Day</p>
+          <strong class="status-value" id="trading-day-value">检查中 / Checking</strong>
+          <p class="status-meta" id="session-value">会话待建立 / Session pending</p>
+        </article>
+        <article class="status-card">
+          <p class="status-label">推送时钟 / Push Clock</p>
+          <div class="status-pills" id="push-clock-pills"></div>
+          <p class="status-meta" id="push-clock-meta">08:00 / 10:00 / 12:00 / health</p>
+        </article>
+        <article class="status-card">
+          <p class="status-label">市场温度 / Market Tone</p>
+          <div class="market-tone-grid" id="market-temperature-grid"></div>
+          <p class="status-meta">A 股 / 港股 / 美股晨间概览</p>
+        </article>
+        <article class="status-card">
+          <p class="status-label">AI 模拟持仓 / AI Portfolio</p>
+          <strong class="status-value" id="portfolio-summary-value">暂未就绪 / Not available yet</strong>
+          <p class="status-meta" id="portfolio-summary-meta">净值、盈亏、换手、持仓</p>
+        </article>
+        <article class="status-card">
+          <p class="status-label">访问窗口 / Access Window</p>
+          <strong class="status-value" id="access-window-value">等待授权 / Awaiting authorization</strong>
+          <p class="status-meta" id="access-window-meta">仅限当日会话</p>
+        </article>
+        <article class="status-card">
+          <p class="status-label">最近刷新 / Last Refresh</p>
+          <strong class="status-value" id="refresh-value">尚未刷新 / Not refreshed yet</strong>
+          <p class="status-meta" id="workspace-date-meta">最新视图 / Latest view</p>
+        </article>
+      </section>
+
+      <main class="workspace-grid">
+        <aside class="workspace-sidebar">
+          <section class="panel archive-panel" id="archive-controls" aria-label="历史回放控制 / Archive and replay controls">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">Workspace / 工作台</p>
+                <h2>最新视图与历史回放 / Latest & History</h2>
+              </div>
+              <p class="panel-copy" id="archive-summary-copy">
+                在已授权工作台内切换最新视图与整日历史快照，不需要离开当前会话。
+              </p>
+            </div>
+
+            <label class="field-label" for="history-date-select">历史日期 / History date</label>
+            <div class="archive-row">
+              <select id="history-date-select" class="field-control" aria-label="选择历史日期 / Select archive date">
+                <option value="">最新可用 / Latest available</option>
+              </select>
+              <button class="ghost-button" id="load-history-button" type="button">加载 / Load</button>
+            </div>
+
+            <div class="filter-group" aria-label="推送类型筛选 / Push type filter">
+              <p class="filter-label">推送类型 / Push type</p>
+              <div class="chip-row" id="stage-filter-group">
+                <button class="filter-chip is-active" data-stage-filter="all" type="button">全部 / All</button>
+                <button class="filter-chip" data-stage-filter="news" type="button">新闻 / News</button>
+                <button class="filter-chip" data-stage-filter="morning" type="button">晨报 / Morning</button>
+                <button class="filter-chip" data-stage-filter="noon" type="button">午报 / Noon</button>
+                <button class="filter-chip" data-stage-filter="health" type="button">健康 / Health</button>
+              </div>
+            </div>
+
+            <div class="filter-group" aria-label="市场筛选 / Market filter">
+              <p class="filter-label">市场焦点 / Market focus</p>
+              <div class="chip-row" id="market-filter-group">
+                <button class="filter-chip is-active" data-market-filter="ALL" type="button">全部 / All</button>
+                <button class="filter-chip" data-market-filter="A" type="button">A 股</button>
+                <button class="filter-chip" data-market-filter="HK" type="button">港股</button>
+                <button class="filter-chip" data-market-filter="US" type="button">美股</button>
+              </div>
+            </div>
+
+            <div class="mini-stat-grid" id="archive-mini-stats"></div>
+          </section>
+
+          <section class="panel" id="push-timeline" aria-label="推送时间轴 / Push timeline">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">Push Timeline / 推送时间轴</p>
+                <h2>多阶段推送 / Multi-stage pushes</h2>
+              </div>
+              <p class="panel-copy">结构化展示新闻、晨报、午报与健康告警，不直接堆叠 Telegram 原文。</p>
+            </div>
+            <div class="timeline-list" id="timeline-list"></div>
+          </section>
+
+          <section class="panel" id="workspace-reference-panel" aria-label="叙事参考卡片 / Narrative reference cards">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">Reference Cards / 参考卡片</p>
+                <h2>叙事锚点 / Narrative anchors</h2>
+              </div>
+              <p class="panel-copy">把观察要点、AI 备注和投资提醒串起来，让组合叙事更连贯。</p>
+            </div>
+            <div class="reference-card-list" id="reference-card-list"></div>
+          </section>
+        </aside>
+
+        <section class="primary-market-canvas" id="primary-market-canvas" aria-label="主市场画布 / Primary market canvas">
+          <section class="panel panel--canvas">
+            <div class="panel-heading panel-heading--wide">
+              <div>
+                <p class="panel-kicker">Primary Market Canvas / 主市场画布</p>
+                <h2 id="canvas-title">晨间宽度、分布与持仓联动 / Morning breadth, distribution, and overlap</h2>
+              </div>
+              <p class="panel-copy" id="canvas-copy">
+                图表放在中心位置，旁侧卡片解释这些市场信号为何会影响 AI 模拟持仓。
+              </p>
+            </div>
+
+            <div class="canvas-grid">
+              <article class="canvas-card canvas-card--hero">
+                <div class="card-heading">
+                  <div>
+                <p class="panel-kicker">Breadth Chart / 宽度图表</p>
+                <h3>市场热度与涨跌宽度 / Market heat and breadth</h3>
+              </div>
+                  <p class="card-copy">按当前可见市场展示晨间涨跌宽度。</p>
+                </div>
+                <div class="chart-shell" id="market-breadth-chart" aria-live="polite"></div>
+              </article>
+
+              <article class="canvas-card">
+                <div class="card-heading">
+                  <div>
+                    <p class="panel-kicker">Candidate Distribution / 候选分布</p>
+                    <h3>机会分布 / Setup distribution</h3>
+                  </div>
+                  <p class="card-copy">A 股、港股、美股候选数量分布。</p>
+                </div>
+                <div class="chart-shell" id="candidate-distribution-chart" aria-live="polite"></div>
+              </article>
+
+              <article class="canvas-card">
+                <div class="card-heading">
+                  <div>
+                    <p class="panel-kicker">Market Summary / 市场摘要</p>
+                    <h3>指数、领涨、优选 / Indices, leaders, picks</h3>
+                  </div>
+                  <p class="card-copy">按可见市场汇总指数表现、领涨标的和今日优先观察项。</p>
+                </div>
+                <div class="summary-card-grid" id="market-summary-cards"></div>
+              </article>
+
+              <article class="canvas-card">
+                <div class="card-heading">
+                  <div>
+                    <p class="panel-kicker">Portfolio Linkage / 持仓联动</p>
+                    <h3>持仓重叠 / Portfolio overlap</h3>
+                  </div>
+                  <p class="card-copy">把全市场扫描结果直接映射到 AI 模拟持仓里。</p>
+                </div>
+                <div class="overlap-grid" id="morning-overlap-list"></div>
+              </article>
+
+              <article class="canvas-card">
+                <div class="card-heading">
+                  <div>
+                    <p class="panel-kicker">News Drivers / 新闻驱动</p>
+                    <h3>观察清单与标题 / Watch list and headlines</h3>
+                  </div>
+                  <p class="card-copy">保留叙事与关键线索，而不是直接展示 Telegram 壳层。</p>
+                </div>
+                <div class="news-stream" id="news-brief-list"></div>
+              </article>
+
+              <article class="canvas-card">
+                <div class="card-heading">
+                  <div>
+                    <p class="panel-kicker">Morning Drivers / 晨间驱动</p>
+                    <h3>跨市场驱动 / Cross-market drivers</h3>
+                  </div>
+                  <p class="card-copy">解释候选标的筛选逻辑和当前风险姿态。</p>
+                </div>
+                <div class="driver-list" id="morning-driver-list"></div>
+              </article>
+            </div>
+          </section>
+        </section>
+
+        <aside class="right-rail">
+          <section class="panel ai-portfolio-panel" id="ai-portfolio-panel" aria-label="AI 模拟持仓面板 / AI simulated portfolio panel">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">AI Simulated Portfolio / AI 模拟持仓</p>
+                <h2>AI 组合透视 / AI Portfolio Lens</h2>
+              </div>
+              <p class="panel-copy" id="portfolio-panel-copy">
+                把晨报扫描、午间分析与 AI 模拟持仓放进同一张盘中决策图。
+              </p>
+            </div>
+
+            <div class="portfolio-metric-grid" id="portfolio-metric-grid"></div>
+
+            <article class="subpanel">
+              <div class="card-heading">
+                <div>
+                  <p class="panel-kicker">Noon Briefing / 午报长读</p>
+                  <h3>午间叙事与组合建议 / Midday narrative and portfolio advice</h3>
+                </div>
+                <p class="card-copy">把午报原始分析、AI 总结与投资建议收拢成可展开阅读卡。</p>
+              </div>
+              <div class="news-stream" id="noon-reading-list"></div>
+            </article>
+
+            <article class="subpanel">
+              <div class="card-heading">
+                <div>
+                  <p class="panel-kicker">Path / 路径</p>
+                  <h3>会话净值路径 / Session NAV path</h3>
+                </div>
+                <p class="card-copy">没有完整净值曲线时，使用起点与当前值生成简洁路径。</p>
+              </div>
+              <div class="chart-shell" id="portfolio-curve-chart" aria-live="polite"></div>
+            </article>
+
+            <article class="subpanel">
+              <div class="card-heading">
+                <div>
+                  <p class="panel-kicker">Exposure / 敞口</p>
+                  <h3>仓位分布 / Allocation split</h3>
+                </div>
+                <p class="card-copy">按类别查看组合敞口。</p>
+              </div>
+              <div class="exposure-list" id="allocation-list"></div>
+            </article>
+
+            <article class="subpanel">
+              <div class="card-heading">
+                <div>
+                  <p class="panel-kicker">Concentration / 集中度</p>
+                  <h3>风险与核心持仓 / Risk and core holdings</h3>
+                </div>
+                <p class="card-copy">查看最大持仓、前三占比，以及与晨报候选的交集。</p>
+              </div>
+              <div class="risk-strip" id="risk-strip"></div>
+              <div class="holding-list" id="holding-list"></div>
+            </article>
+
+            <article class="subpanel">
+              <div class="card-heading">
+                <div>
+                  <p class="panel-kicker">Impact / 影响归因</p>
+                  <h3>正负贡献 / Contributors and detractors</h3>
+                </div>
+                <p class="card-copy">识别组合收益和亏损分别来自哪里。</p>
+              </div>
+              <div class="impact-grid">
+                <div>
+                  <p class="impact-heading">贡献项 / Contributors</p>
+                  <div class="impact-list" id="contributors-list"></div>
+                </div>
+                <div>
+                  <p class="impact-heading">拖累项 / Detractors</p>
+                  <div class="impact-list" id="detractors-list"></div>
+                </div>
+              </div>
+            </article>
+          </section>
+
+          <section class="panel live-rail" id="live-rail" aria-label="实时侧栏 / Live rail">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">Live Rail / 实时侧栏</p>
+                <h2>状态、链接与新闻脉冲 / Status, access, headline pulse</h2>
+              </div>
+              <p class="panel-copy">右侧集中查看告警、私有链接有效期与刷新节奏。</p>
+            </div>
+
+            <div class="live-card-stack">
+              <article class="live-card" id="health-card"></article>
+              <article class="live-card" id="delivery-card"></article>
+              <article class="live-card" id="private-link-card"></article>
+              <article class="live-card" id="autorefresh-card"></article>
+            </div>
+
+            <article class="subpanel">
+              <div class="card-heading">
+                <div>
+                  <p class="panel-kicker">Latest News Stream / 最新新闻流</p>
+                  <h3>标题脉冲 / Headline pulse</h3>
+                </div>
+                <p class="card-copy">在展开完整卡片之前，先快速浏览关键标题。</p>
+              </div>
+              <div class="compact-news-list" id="compact-news-list"></div>
+            </article>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <section class="global-state is-hidden" id="global-state" aria-live="assertive">
+      <div class="global-state-card">
+        <p class="state-kicker" id="global-state-kicker">金融分析工作台 / Finance dashboard</p>
+        <h2 id="global-state-title">正在加载工作台 / Loading workbench</h2>
+        <p id="global-state-message">
+          正在准备最新金融工作台。 Preparing the latest finance workspace.
+        </p>
+        <div class="global-state-actions">
+          <button class="primary-button" id="state-retry-button" type="button">重试 / Retry</button>
+          <a class="ghost-button ghost-button--link" id="state-link-button" href="/finance">打开 /finance / Open /finance</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="focus-overlay is-hidden" id="focus-overlay" aria-hidden="true">
+      <button class="focus-overlay-backdrop" id="focus-overlay-backdrop" type="button" aria-label="关闭聚焦查看 / Close focus view"></button>
+      <div class="focus-shell" role="dialog" aria-modal="true" aria-labelledby="focus-shell-title">
+        <div class="focus-shell-head">
+          <div>
+            <p class="state-kicker" id="focus-shell-kicker">聚焦查看 / Focus view</p>
+            <h2 id="focus-shell-title">内容详情 / Detail view</h2>
+          </div>
+          <button class="ghost-button focus-close-button" id="focus-close-button" type="button">关闭 / Close</button>
+        </div>
+        <div class="focus-shell-body" id="focus-shell-body"></div>
+      </div>
+    </section>
+
+    <script src="/finance/assets/finance_dashboard.js?v=20260316m" defer></script>
+  </body>
+</html>

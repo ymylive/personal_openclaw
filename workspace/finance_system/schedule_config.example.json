@@ -1,0 +1,23 @@
+{
+  "timezone": "Asia/Shanghai",
+  "default_reminder_minutes": 30,
+  "semester": {
+    "name": "Example Semester",
+    "week1_monday": "2026-03-09"
+  },
+  "classes": [
+    {
+      "id": "class-demo-001",
+      "title": "Discrete Mathematics",
+      "weekday": 2,
+      "start_time": "08:00",
+      "end_time": "09:40",
+      "weeks": [1, 2, 3, 4],
+      "location": "Teaching Building A-101",
+      "teacher": "Example Teacher",
+      "notes": "Replace with your own class data",
+      "reminder_minutes": 30,
+      "skip_dates": []
+    }
+  ]
+}
