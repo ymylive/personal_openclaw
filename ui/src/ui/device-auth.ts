@@ -13,6 +13,22 @@ type DeviceAuthStore = {
 
 const STORAGE_KEY = "openclaw.device.auth.v1";
 
+function getSessionStorage(): Storage | null {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+function getLocalStorage(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeRole(role: string): string {
   return role.trim();
 }
@@ -32,8 +48,12 @@ function normalizeScopes(scopes: string[] | undefined): string[] {
 }
 
 function readStore(): DeviceAuthStore | null {
+  const sessionStorage = getSessionStorage();
+  const localStorage = getLocalStorage();
+  const preferredStorage = sessionStorage ?? localStorage;
+  const legacyStorage = sessionStorage ? localStorage : null;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = preferredStorage?.getItem(STORAGE_KEY) ?? legacyStorage?.getItem(STORAGE_KEY);
     if (!raw) {
       return null;
     }
@@ -47,6 +67,10 @@ function readStore(): DeviceAuthStore | null {
     if (!parsed.tokens || typeof parsed.tokens !== "object") {
       return null;
     }
+    if (legacyStorage && preferredStorage) {
+      preferredStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+      legacyStorage.removeItem(STORAGE_KEY);
+    }
     return parsed;
   } catch {
     return null;
@@ -54,8 +78,13 @@ function readStore(): DeviceAuthStore | null {
 }
 
 function writeStore(store: DeviceAuthStore) {
+  const sessionStorage = getSessionStorage();
+  const localStorage = getLocalStorage();
+  const preferredStorage = sessionStorage ?? localStorage;
+  const legacyStorage = sessionStorage ? localStorage : null;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    preferredStorage?.setItem(STORAGE_KEY, JSON.stringify(store));
+    legacyStorage?.removeItem(STORAGE_KEY);
   } catch {
     // best-effort
   }

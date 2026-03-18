@@ -1,4 +1,5 @@
 const KEY = "openclaw.control.settings.v1";
+const SESSION_TOKEN_KEY = "openclaw.control.session-token.v1";
 
 import type { ThemeMode } from "./theme.ts";
 
@@ -14,6 +15,49 @@ export type UiSettings = {
   navCollapsed: boolean; // Collapsible sidebar state
   navGroupsCollapsed: Record<string, boolean>; // Which nav groups are collapsed
 };
+
+function getSessionStorage(): Storage | null {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+function getLocalStorage(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function readSessionToken(): string {
+  const sessionStorage = getSessionStorage();
+  const localStorage = getLocalStorage();
+  const tokenStorage = sessionStorage ?? localStorage;
+  const sessionToken = tokenStorage?.getItem(SESSION_TOKEN_KEY)?.trim() ?? "";
+  if (sessionToken) {
+    return sessionToken;
+  }
+  try {
+    const raw = localStorage?.getItem(KEY);
+    if (!raw) {
+      return "";
+    }
+    const parsed = JSON.parse(raw) as Partial<UiSettings>;
+    const legacyToken = typeof parsed.token === "string" ? parsed.token.trim() : "";
+    if (!legacyToken) {
+      return "";
+    }
+    tokenStorage?.setItem(SESSION_TOKEN_KEY, legacyToken);
+    const sanitized = { ...parsed, token: "" };
+    localStorage?.setItem(KEY, JSON.stringify(sanitized));
+    return legacyToken;
+  } catch {
+    return "";
+  }
+}
 
 export function loadSettings(): UiSettings {
   const defaultUrl = (() => {
@@ -33,11 +77,12 @@ export function loadSettings(): UiSettings {
     navCollapsed: false,
     navGroupsCollapsed: {},
   };
+  const token = readSessionToken();
 
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = getLocalStorage()?.getItem(KEY);
     if (!raw) {
-      return defaults;
+      return { ...defaults, token };
     }
     const parsed = JSON.parse(raw) as Partial<UiSettings>;
     return {
@@ -45,7 +90,7 @@ export function loadSettings(): UiSettings {
         typeof parsed.gatewayUrl === "string" && parsed.gatewayUrl.trim()
           ? parsed.gatewayUrl.trim()
           : defaults.gatewayUrl,
-      token: typeof parsed.token === "string" ? parsed.token : defaults.token,
+      token,
       sessionKey:
         typeof parsed.sessionKey === "string" && parsed.sessionKey.trim()
           ? parsed.sessionKey.trim()
@@ -79,10 +124,19 @@ export function loadSettings(): UiSettings {
           : defaults.navGroupsCollapsed,
     };
   } catch {
-    return defaults;
+    return { ...defaults, token };
   }
 }
 
 export function saveSettings(next: UiSettings) {
-  localStorage.setItem(KEY, JSON.stringify(next));
+  const localStorage = getLocalStorage();
+  const sessionStorage = getSessionStorage();
+  const tokenStorage = sessionStorage ?? localStorage;
+  const { token, ...persisted } = next;
+  localStorage?.setItem(KEY, JSON.stringify({ ...persisted, token: "" }));
+  if (token.trim()) {
+    tokenStorage?.setItem(SESSION_TOKEN_KEY, token);
+  } else {
+    tokenStorage?.removeItem(SESSION_TOKEN_KEY);
+  }
 }

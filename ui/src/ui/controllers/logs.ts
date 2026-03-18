@@ -17,6 +17,7 @@ export type LogsState = {
 
 const LOG_BUFFER_LIMIT = 2000;
 const LEVELS = new Set<LogLevel>(["trace", "debug", "info", "warn", "error", "fatal"]);
+const QUIET_LOGS_IN_FLIGHT = new WeakSet<LogsState>();
 
 function parseMaybeJsonString(value: unknown) {
   if (typeof value !== "string") {
@@ -100,8 +101,14 @@ export async function loadLogs(state: LogsState, opts?: { reset?: boolean; quiet
   if (!state.client || !state.connected) {
     return;
   }
+  if (opts?.quiet && QUIET_LOGS_IN_FLIGHT.has(state)) {
+    return;
+  }
   if (state.logsLoading && !opts?.quiet) {
     return;
+  }
+  if (opts?.quiet) {
+    QUIET_LOGS_IN_FLIGHT.add(state);
   }
   if (!opts?.quiet) {
     state.logsLoading = true;
@@ -140,6 +147,9 @@ export async function loadLogs(state: LogsState, opts?: { reset?: boolean; quiet
   } catch (err) {
     state.logsError = String(err);
   } finally {
+    if (opts?.quiet) {
+      QUIET_LOGS_IN_FLIGHT.delete(state);
+    }
     if (!opts?.quiet) {
       state.logsLoading = false;
     }

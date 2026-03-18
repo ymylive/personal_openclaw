@@ -16,6 +16,22 @@ export type DeviceIdentity = {
 
 const STORAGE_KEY = "openclaw-device-identity-v1";
 
+function getSessionStorage(): Storage | null {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+function getLocalStorage(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
 function base64UrlEncode(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) {
@@ -58,8 +74,13 @@ async function generateIdentity(): Promise<DeviceIdentity> {
 }
 
 export async function loadOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
+  const sessionStorage = getSessionStorage();
+  const localStorage = getLocalStorage();
+  const preferredStorage = sessionStorage ?? localStorage;
+  const legacyStorage = sessionStorage ? localStorage : null;
+
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = preferredStorage?.getItem(STORAGE_KEY) ?? legacyStorage?.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as StoredIdentity;
       if (
@@ -74,12 +95,17 @@ export async function loadOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
             ...parsed,
             deviceId: derivedId,
           };
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+          preferredStorage?.setItem(STORAGE_KEY, JSON.stringify(updated));
+          legacyStorage?.removeItem(STORAGE_KEY);
           return {
             deviceId: derivedId,
             publicKey: parsed.publicKey,
             privateKey: parsed.privateKey,
           };
+        }
+        if (legacyStorage && preferredStorage) {
+          preferredStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+          legacyStorage.removeItem(STORAGE_KEY);
         }
         return {
           deviceId: parsed.deviceId,
@@ -100,7 +126,7 @@ export async function loadOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
     privateKey: identity.privateKey,
     createdAtMs: Date.now(),
   };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+  preferredStorage?.setItem(STORAGE_KEY, JSON.stringify(stored));
   return identity;
 }
 

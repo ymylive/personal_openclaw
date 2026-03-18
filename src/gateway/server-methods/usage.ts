@@ -30,6 +30,10 @@ import {
 import { loadCombinedSessionStoreForGateway, loadSessionEntry } from "../session-utils.js";
 
 const COST_USAGE_CACHE_TTL_MS = 30_000;
+const DEFAULT_SESSIONS_USAGE_LIMIT = 100;
+const MAX_SESSIONS_USAGE_LIMIT = 300;
+const DEFAULT_SESSION_LOGS_LIMIT = 200;
+const MAX_SESSION_LOGS_LIMIT = 500;
 
 type DateRange = { startMs: number; endMs: number };
 
@@ -259,7 +263,11 @@ export const usageHandlers: GatewayRequestHandlers = {
       startDate: p.startDate,
       endDate: p.endDate,
     });
-    const limit = typeof p.limit === "number" && Number.isFinite(p.limit) ? p.limit : 50;
+    const requestedLimit = typeof p.limit === "number" && Number.isFinite(p.limit) ? p.limit : 0;
+    const limit =
+      requestedLimit > 0
+        ? Math.min(Math.floor(requestedLimit), MAX_SESSIONS_USAGE_LIMIT)
+        : DEFAULT_SESSIONS_USAGE_LIMIT;
     const includeContextWeight = p.includeContextWeight ?? false;
     const specificKey = typeof p.key === "string" ? p.key.trim() : null;
 
@@ -742,8 +750,8 @@ export const usageHandlers: GatewayRequestHandlers = {
 
     const limit =
       typeof params?.limit === "number" && Number.isFinite(params.limit)
-        ? Math.min(params.limit, 1000)
-        : 200;
+        ? Math.min(Math.max(1, Math.floor(params.limit)), MAX_SESSION_LOGS_LIMIT)
+        : DEFAULT_SESSION_LOGS_LIMIT;
 
     const config = loadConfig();
     const { entry } = loadSessionEntry(key);

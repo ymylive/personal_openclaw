@@ -187,8 +187,8 @@ export function formatControlUiSshHint(params: {
   const basePath = normalizeControlUiBasePath(params.basePath);
   const uiPath = basePath ? `${basePath}/` : "/";
   const localUrl = `http://localhost:${params.port}${uiPath}`;
-  const authedUrl = params.token
-    ? `${localUrl}#token=${encodeURIComponent(params.token)}`
+  const authHint = params.token
+    ? "If prompted for auth in the browser, paste your gateway token manually."
     : undefined;
   const sshTarget = resolveSshTargetHint();
   return [
@@ -196,7 +196,7 @@ export function formatControlUiSshHint(params: {
     `ssh -N -L ${params.port}:127.0.0.1:${params.port} ${sshTarget}`,
     "Then open:",
     localUrl,
-    authedUrl,
+    authHint,
     "Docs:",
     "https://docs.openclaw.ai/gateway/remote",
     "https://docs.openclaw.ai/web/control-ui",

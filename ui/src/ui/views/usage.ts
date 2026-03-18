@@ -2128,7 +2128,7 @@ export type UsageProps = {
   startDate: string;
   endDate: string;
   sessions: UsageSessionEntry[];
-  sessionsLimitReached: boolean; // True if 1000 session cap was hit
+  sessionsLimitReached: boolean; // True if the current session request cap was hit
   totals: UsageTotals | null;
   aggregates: UsageAggregates | null;
   costDaily: CostDailyEntry[];

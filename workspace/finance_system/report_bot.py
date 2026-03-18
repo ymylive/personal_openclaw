@@ -26,7 +26,7 @@ from dateutil import parser as date_parser
 from zoneinfo import ZoneInfo
 
 from finance_system.dashboard_access import build_daily_key, valid_until_for_date
-from finance_system.dashboard_contracts import build_access_delivery, build_index_payload
+from finance_system.dashboard_contracts import DEFAULT_TELEGRAM_ROUTE, build_access_delivery, build_index_payload
 from finance_system.dashboard_storage import DEFAULT_DATA_ROOT, list_history_dates, load_latest_bundle, write_stage_payload
 
 try:
@@ -3277,21 +3277,25 @@ def discover_dashboard_secret_from_service() -> str:
     return ""
 
 
-def resolve_dashboard_secret(token: str = "") -> str:
+def resolve_dashboard_secret() -> str:
     explicit = os.getenv("FINANCE_DASHBOARD_SECRET", "").strip()
     if explicit:
         return explicit
     service_secret = discover_dashboard_secret_from_service()
     if service_secret:
         return service_secret
-    if token:
-        return token
-    return "openclaw-finance-dashboard-demo-secret"
+    return ""
 
 
 def build_dashboard_access_route(secret: str, date_str: str = "") -> str:
     resolved_date = date_str or now_cn().date().isoformat()
     return f"/finance/access/{build_daily_key(secret, resolved_date)}"
+
+
+def resolve_dashboard_target_route(secret: str, date_str: str = "") -> str:
+    if not secret:
+        return DEFAULT_TELEGRAM_ROUTE
+    return build_dashboard_access_route(secret, date_str)
 
 
 def build_dashboard_access_url(secret: str, date_str: str = "", public_base_url: str = "") -> str:
@@ -3642,7 +3646,7 @@ def persist_dashboard_stage(stage: str, payload: dict, secret: str) -> None:
         generated_at=generated_at,
         content=latest,
         history_dates=history_dates,
-        telegram_access_route=build_dashboard_access_route(secret, date_str),
+        telegram_access_route=resolve_dashboard_target_route(secret, date_str),
         valid_until=valid_until_for_date(date_str),
     )
     write_stage_payload(DASHBOARD_DATA_DIR, date_str, "index", index_payload)
@@ -3758,8 +3762,11 @@ def main():
         sys.exit(2)
 
     token, chat_id = get_telegram_target(config, override_chat_id=args.chat_id)
-    dashboard_secret = resolve_dashboard_secret(token)
-    dashboard_enabled = dashboard_mode_enabled()
+    dashboard_secret = resolve_dashboard_secret()
+    dashboard_requested = dashboard_mode_enabled()
+    dashboard_enabled = dashboard_requested and bool(dashboard_secret)
+    if dashboard_requested and not dashboard_secret:
+        print("finance dashboard disabled: missing FINANCE_DASHBOARD_SECRET", file=sys.stderr)
 
     skip_send = False
     health_alert_message = ""
@@ -3777,7 +3784,7 @@ def main():
             message,
             build_access_delivery(
                 status="skipped" if args.dry_run else "pending",
-                target_route=build_dashboard_access_route(dashboard_secret),
+                target_route=resolve_dashboard_target_route(dashboard_secret),
             ),
         )
     elif args.mode == "morning":
@@ -3803,7 +3810,7 @@ def main():
                     web_news,
                     reference_state=reference_state,
                 )
-                target_route = build_dashboard_access_route(dashboard_secret)
+                target_route = resolve_dashboard_target_route(dashboard_secret)
                 main_stage_payload = build_morning_stage_payload(
                     snapshot,
                     jin10_news,
@@ -3854,7 +3861,7 @@ def main():
             message_text=message,
             telegram_delivery=build_access_delivery(
                 status="skipped" if args.dry_run else "pending",
-                target_route=build_dashboard_access_route(dashboard_secret),
+                target_route=resolve_dashboard_target_route(dashboard_secret),
             ),
             morning_payload=load_latest_morning_payload(),
         )
@@ -3872,15 +3879,15 @@ def main():
         print(json.dumps({"ok": True, "skipped": True, "reason": message}, ensure_ascii=False))
         return
 
-    main_target_route = build_dashboard_access_route(dashboard_secret)
-    access_url = build_dashboard_access_url(dashboard_secret)
+    main_target_route = resolve_dashboard_target_route(dashboard_secret)
+    access_url = build_dashboard_access_url(dashboard_secret) if dashboard_enabled else ""
     outbound_text = build_dashboard_telegram_message(access_url) if dashboard_enabled else message
     send_result = send_telegram(token, chat_id, outbound_text)
     if main_stage_payload:
         main_stage_payload["telegram_delivery"] = build_delivery_state_from_result(send_result, main_target_route)
         persist_dashboard_stage(main_stage_name, main_stage_payload, dashboard_secret)
     if args.mode == "morning" and health_alert_message:
-        health_target_route = build_dashboard_access_route(dashboard_secret)
+        health_target_route = resolve_dashboard_target_route(dashboard_secret)
         if send_result.get("ok") and health_stage_payload and health_stage_payload.get("status") == "ready":
             health_text = (
                 build_dashboard_telegram_message(access_url, notice="晨间数据预警，请查看金融分析工作台")

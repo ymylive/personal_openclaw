@@ -32,11 +32,15 @@ export function startLogsPolling(host: PollingHost) {
   if (host.logsPollInterval != null) {
     return;
   }
+  let inFlight = false;
   host.logsPollInterval = window.setInterval(() => {
-    if (host.tab !== "logs") {
+    if (host.tab !== "logs" || inFlight) {
       return;
     }
-    void loadLogs(host as unknown as OpenClawApp, { quiet: true });
+    inFlight = true;
+    void loadLogs(host as unknown as OpenClawApp, { quiet: true }).finally(() => {
+      inFlight = false;
+    });
   }, 2000);
 }
 

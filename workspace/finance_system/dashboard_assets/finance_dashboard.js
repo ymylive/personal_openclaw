@@ -47,6 +47,7 @@
     },
     recommendedPollSeconds: 60,
     pollTimer: null,
+    pollPromise: null,
     initialized: false,
     busy: false,
     canvasBalanceFrame: null,
@@ -399,6 +400,21 @@
     }
   }
 
+  function pollStatusSingleFlight() {
+    if (appState.pollPromise) {
+      return appState.pollPromise;
+    }
+    if (appState.busy) {
+      return Promise.resolve();
+    }
+
+    var request = pollStatus();
+    appState.pollPromise = request.finally(function () {
+      appState.pollPromise = null;
+    });
+    return appState.pollPromise;
+  }
+
   async function requestJson(url) {
     var response = await fetch(url, {
       credentials: "same-origin",
@@ -511,7 +527,7 @@
     clearPolling();
     var safeSeconds = Math.max(15, Number(seconds) || 60);
     appState.pollTimer = window.setInterval(function () {
-      pollStatus();
+      pollStatusSingleFlight();
     }, safeSeconds * 1000);
   }
 

@@ -4,6 +4,7 @@ import type { ResolvedNextcloudTalkAccount } from "./accounts.js";
 
 const ROOM_CACHE_TTL_MS = 5 * 60 * 1000;
 const ROOM_CACHE_ERROR_TTL_MS = 30 * 1000;
+const REDACTED_ROOM_TOKEN = "[redacted-room-token]";
 
 const roomCache = new Map<
   string,
@@ -12,6 +13,24 @@ const roomCache = new Map<
 
 function resolveRoomCacheKey(params: { accountId: string; roomToken: string }) {
   return `${params.accountId}:${params.roomToken}`;
+}
+
+function redactRoomToken(_roomToken: string): string {
+  return REDACTED_ROOM_TOKEN;
+}
+
+function redactRoomTokenFromText(text: string, roomToken: string): string {
+  const raw = String(text ?? "");
+  const normalized = roomToken.trim();
+  if (!raw || !normalized) {
+    return raw;
+  }
+  let sanitized = raw.split(normalized).join(REDACTED_ROOM_TOKEN);
+  const encoded = encodeURIComponent(normalized);
+  if (encoded && encoded !== normalized) {
+    sanitized = sanitized.split(encoded).join(REDACTED_ROOM_TOKEN);
+  }
+  return sanitized;
 }
 
 function readApiPassword(params: {
@@ -103,7 +122,9 @@ export async function resolveNextcloudTalkRoomKind(params: {
         fetchedAt: Date.now(),
         error: `status:${response.status}`,
       });
-      runtime?.log?.(`nextcloud-talk: room lookup failed (${response.status}) token=${roomToken}`);
+      runtime?.log?.(
+        `nextcloud-talk: room lookup failed (${response.status}) token=${redactRoomToken(roomToken)}`,
+      );
       return undefined;
     }
 
@@ -115,11 +136,12 @@ export async function resolveNextcloudTalkRoomKind(params: {
     roomCache.set(key, { fetchedAt: Date.now(), kind });
     return kind;
   } catch (err) {
+    const errorText = redactRoomTokenFromText(err instanceof Error ? err.message : String(err), roomToken);
     roomCache.set(key, {
       fetchedAt: Date.now(),
-      error: err instanceof Error ? err.message : String(err),
+      error: errorText,
     });
-    runtime?.error?.(`nextcloud-talk: room lookup error: ${String(err)}`);
+    runtime?.error?.(`nextcloud-talk: room lookup error: ${errorText}`);
     return undefined;
   }
 }

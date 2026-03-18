@@ -473,6 +473,7 @@ export async function discoverAllSessions(params?: {
   agentId?: string;
   startMs?: number;
   endMs?: number;
+  includeFirstUserMessage?: boolean;
 }): Promise<DiscoveredSession[]> {
   const sessionsDir = resolveSessionTranscriptsDirForAgent(params?.agentId);
   const entries = await fs.promises.readdir(sessionsDir, { withFileTypes: true }).catch(() => []);
@@ -499,49 +500,50 @@ export async function discoverAllSessions(params?: {
     // Extract session ID from filename (remove .jsonl)
     const sessionId = entry.name.slice(0, -6);
 
-    // Try to read first user message for label extraction
     let firstUserMessage: string | undefined;
-    try {
-      const fileStream = fs.createReadStream(filePath, { encoding: "utf-8" });
-      const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
+    if (params?.includeFirstUserMessage) {
+      try {
+        const fileStream = fs.createReadStream(filePath, { encoding: "utf-8" });
+        const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
 
-      for await (const line of rl) {
-        const trimmed = line.trim();
-        if (!trimmed) {
-          continue;
-        }
-        try {
-          const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-          const message = parsed.message as Record<string, unknown> | undefined;
-          if (message?.role === "user") {
-            const content = message.content;
-            if (typeof content === "string") {
-              firstUserMessage = content.slice(0, 100);
-            } else if (Array.isArray(content)) {
-              for (const block of content) {
-                if (
-                  typeof block === "object" &&
-                  block &&
-                  (block as Record<string, unknown>).type === "text"
-                ) {
-                  const text = (block as Record<string, unknown>).text;
-                  if (typeof text === "string") {
-                    firstUserMessage = text.slice(0, 100);
+        for await (const line of rl) {
+          const trimmed = line.trim();
+          if (!trimmed) {
+            continue;
+          }
+          try {
+            const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+            const message = parsed.message as Record<string, unknown> | undefined;
+            if (message?.role === "user") {
+              const content = message.content;
+              if (typeof content === "string") {
+                firstUserMessage = content.slice(0, 100);
+              } else if (Array.isArray(content)) {
+                for (const block of content) {
+                  if (
+                    typeof block === "object" &&
+                    block &&
+                    (block as Record<string, unknown>).type === "text"
+                  ) {
+                    const text = (block as Record<string, unknown>).text;
+                    if (typeof text === "string") {
+                      firstUserMessage = text.slice(0, 100);
+                    }
+                    break;
                   }
-                  break;
                 }
               }
+              break;
             }
-            break; // Found first user message
+          } catch {
+            // Skip malformed lines
           }
-        } catch {
-          // Skip malformed lines
         }
+        rl.close();
+        fileStream.destroy();
+      } catch {
+        // Ignore read errors
       }
-      rl.close();
-      fileStream.destroy();
-    } catch {
-      // Ignore read errors
     }
 
     discovered.push({

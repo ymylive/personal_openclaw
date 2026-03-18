@@ -11,6 +11,8 @@ type NextcloudTalkSendOpts = {
   verbose?: boolean;
 };
 
+const REDACTED_ROOM_TOKEN = "[redacted-room-token]";
+
 function resolveCredentials(
   explicit: { baseUrl?: string; secret?: string },
   account: { baseUrl: string; secret: string; accountId: string },
@@ -53,6 +55,24 @@ function normalizeRoomToken(to: string): string {
     throw new Error("Room token is required for Nextcloud Talk sends");
   }
   return normalized;
+}
+
+function redactRoomToken(_roomToken: string): string {
+  return REDACTED_ROOM_TOKEN;
+}
+
+function redactRoomTokenFromText(text: string, roomToken: string): string {
+  const raw = String(text ?? "");
+  const normalized = roomToken.trim();
+  if (!raw || !normalized) {
+    return raw;
+  }
+  let sanitized = raw.split(normalized).join(REDACTED_ROOM_TOKEN);
+  const encoded = encodeURIComponent(normalized);
+  if (encoded && encoded !== normalized) {
+    sanitized = sanitized.split(encoded).join(REDACTED_ROOM_TOKEN);
+  }
+  return sanitized;
 }
 
 export async function sendMessageNextcloudTalk(
@@ -116,7 +136,7 @@ export async function sendMessageNextcloudTalk(
   });
 
   if (!response.ok) {
-    const errorBody = await response.text().catch(() => "");
+    const errorBody = redactRoomTokenFromText(await response.text().catch(() => ""), roomToken).trim();
     const status = response.status;
     let errorMsg = `Nextcloud Talk send failed (${status})`;
 
@@ -127,7 +147,7 @@ export async function sendMessageNextcloudTalk(
     } else if (status === 403) {
       errorMsg = "Nextcloud Talk: forbidden - bot may not have permission in this room";
     } else if (status === 404) {
-      errorMsg = `Nextcloud Talk: room not found (token=${roomToken})`;
+      errorMsg = "Nextcloud Talk: room not found";
     } else if (errorBody) {
       errorMsg = `Nextcloud Talk send failed: ${errorBody}`;
     }
@@ -157,7 +177,7 @@ export async function sendMessageNextcloudTalk(
   }
 
   if (opts.verbose) {
-    console.log(`[nextcloud-talk] Sent message ${messageId} to room ${roomToken}`);
+    console.log(`[nextcloud-talk] Sent message ${messageId} to room ${redactRoomToken(roomToken)}`);
   }
 
   getNextcloudTalkRuntime().channel.activity.record({
@@ -207,7 +227,7 @@ export async function sendReactionNextcloudTalk(
   });
 
   if (!response.ok) {
-    const errorBody = await response.text().catch(() => "");
+    const errorBody = redactRoomTokenFromText(await response.text().catch(() => ""), normalizedToken).trim();
     throw new Error(`Nextcloud Talk reaction failed: ${response.status} ${errorBody}`.trim());
   }
 

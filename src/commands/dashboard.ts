@@ -31,10 +31,7 @@ export async function dashboardCommand(
     customBindHost,
     basePath,
   });
-  // Prefer URL fragment to avoid leaking auth tokens via query params.
-  const dashboardUrl = token
-    ? `${links.httpUrl}#token=${encodeURIComponent(token)}`
-    : links.httpUrl;
+  const dashboardUrl = links.httpUrl;
 
   runtime.log(`Dashboard URL: ${dashboardUrl}`);
 

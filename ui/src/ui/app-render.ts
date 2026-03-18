@@ -331,7 +331,7 @@ export function renderApp(state: AppViewState) {
                 startDate: state.usageStartDate,
                 endDate: state.usageEndDate,
                 sessions: state.usageResult?.sessions ?? [],
-                sessionsLimitReached: (state.usageResult?.sessions?.length ?? 0) >= 1000,
+                sessionsLimitReached: (state.usageResult?.sessions?.length ?? 0) >= 300,
                 totals: state.usageResult?.totals ?? null,
                 aggregates: state.usageResult?.aggregates ?? null,
                 costDaily: state.usageCostSummary?.daily ?? [],
