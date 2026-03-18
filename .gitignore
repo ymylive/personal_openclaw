@@ -72,6 +72,8 @@ USER.md
 
 # Agent credentials and memory (NEVER COMMIT)
 memory/
+!src/memory/
+!src/memory/**
 .agent/*.json
 !.agent/workflows/
 
