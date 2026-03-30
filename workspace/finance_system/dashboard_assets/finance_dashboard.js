@@ -317,6 +317,13 @@
     }
   }
 
+  function assertFinanceScope(payload) {
+    if (!payload || payload.module !== "finance") {
+      throw new Error("Expected finance payload");
+    }
+    return payload;
+  }
+
   async function loadLatest(options) {
     options = options || {};
     setBusy(true);
@@ -326,7 +333,7 @@
     }
 
     try {
-      var payload = await requestJson(config.bootstrapUrl);
+      var payload = assertFinanceScope(await requestJson(config.bootstrapUrl));
       consumePayload(payload, "latest");
       syncHistoryIndex();
     } catch (error) {
@@ -346,7 +353,7 @@
     showBanner(bi("正在载入历史回放 " + formatDateLabel(date), "Loading archive replay for " + formatDateLabel(date)), "info");
 
     try {
-      var payload = await requestJson(config.archiveBase + encodeURIComponent(date));
+      var payload = assertFinanceScope(await requestJson(config.archiveBase + encodeURIComponent(date)));
       consumePayload(payload, "archive");
       syncHistoryIndex();
     } catch (error) {

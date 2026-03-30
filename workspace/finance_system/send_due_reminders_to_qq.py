@@ -1,56 +1,28 @@
 #!/usr/bin/env python3
 import argparse
-import asyncio
 import json
-from datetime import timedelta
+import sys
 
 import schedule_reminder as sr
-from qq_direct_utils import load_qq_ws_config, send_group_message
-from workspace.modules.finance.push import build_finance_push_request
+from pathlib import Path
 
-__all__ = ["build_finance_push_request"]
+script_path = Path(__file__).resolve().parent
+workspace_root = script_path.parent
+project_root = workspace_root.parent
+for candidate in (workspace_root, project_root):
+    candidate_path = str(candidate)
+    if candidate_path not in sys.path:
+        sys.path.insert(0, candidate_path)
+
+from workspace.modules.finance.push import orchestrate_due_reminders_push
+from workspace.modules.finance.reports import build_public_due_reminder_message
 
 DEFAULT_GROUP_ID = 1061966199
 QQ_REMINDER_MINUTES = 30
 QQ_CONFIRM_POLL_INTERVAL_SECONDS = 1.5
 QQ_CONFIRM_POLL_COUNT = 8
 QQ_DUE_LOCK_FILE = sr.BASE_DIR / "schedule_qq_due.lock"
-PUBLIC_TAG = "公事"
 NO_DUE_TEXT = "当前没有到点提醒。"
-
-
-def is_public_event(item: dict) -> bool:
-    text = f"{item.get('title', '')} {item.get('notes', '')}"
-    return PUBLIC_TAG in text
-
-
-def collect_due_items(config: dict, state: dict):
-    now_dt = sr.now_cn()
-    last_check = sr.parse_iso_datetime(state.get("qq_last_reminder_check", ""))
-    if last_check is None or last_check > now_dt:
-        last_check = now_dt - timedelta(seconds=70)
-
-    due_items = []
-    seen = set()
-    for offset in (0, 1):
-        target_date = (now_dt + timedelta(days=offset)).date()
-        for item in sr.get_schedule_for_date(config, target_date):
-            kind = item.get("kind")
-            if kind == "event" and not is_public_event(item):
-                continue
-            key = f"qq:{sr.reminder_key(item)}"
-            if key in seen:
-                continue
-            seen.add(key)
-            reminder_at = item["start_dt"] - timedelta(minutes=QQ_REMINDER_MINUTES)
-            if reminder_at <= last_check or reminder_at > now_dt + timedelta(seconds=10):
-                continue
-            if key in state.get("sent_reminders", {}):
-                continue
-            due_items.append((item, reminder_at))
-
-    due_items.sort(key=lambda row: row[1])
-    return now_dt, due_items
 
 
 def main() -> None:
@@ -59,67 +31,58 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    with sr.runtime_lock(QQ_DUE_LOCK_FILE) as locked:
-        if not locked:
-            print(json.dumps({"ok": True, "skipped": "locked"}, ensure_ascii=False))
-            return
+    def build_due_message(item: dict) -> str:
+        return build_public_due_reminder_message(item, reminder_minutes=int(item["reminder_minutes"]))
 
-        config = sr.load_config()
-        state = sr.load_state()
-        now_dt, due_items = collect_due_items(config, state)
+    if args.dry_run:
+        deliver = lambda _request: {"status": "dry-run"}
+    else:
+        import asyncio
+        from qq_direct_utils import load_qq_ws_config, send_group_message
 
-        if args.dry_run:
-            if not due_items:
-                print(NO_DUE_TEXT)
-                return
-            for item, _ in due_items:
-                item = dict(item)
-                item["reminder_minutes"] = QQ_REMINDER_MINUTES
-                print(sr.build_due_message(item))
-                print("---")
-            return
+        ws_cache: dict[str, str] = {}
 
-        if not due_items:
-            state["qq_last_reminder_check"] = now_dt.isoformat()
-            sr.prune_sent_reminders(state, now_dt)
-            sr.save_json(sr.STATE_FILE, state)
-            print(json.dumps({"ok": True, "sent": 0, "failed": 0}, ensure_ascii=False))
-            return
-
-        ws_url, token = load_qq_ws_config()
-        sent = 0
-        failed_reminder_at = []
-        sent_at = now_dt.isoformat()
-        for item, reminder_at in due_items:
-            item = dict(item)
-            item["reminder_minutes"] = QQ_REMINDER_MINUTES
-            message = sr.build_due_message(item)
-            result = asyncio.run(
+        def deliver(request) -> dict:
+            if not ws_cache:
+                ws_url, token = load_qq_ws_config()
+                ws_cache["ws_url"] = ws_url
+                ws_cache["token"] = token
+            target = request.targets[0] if request.targets else None
+            group_id = int(target.recipient) if target and target.recipient else args.group_id
+            return asyncio.run(
                 send_group_message(
-                    ws_url,
-                    token,
-                    args.group_id,
-                    message,
+                    ws_cache["ws_url"],
+                    ws_cache["token"],
+                    group_id,
+                    request.body,
                     "qq-due",
                     attempts=1,
                     confirm_poll_interval_seconds=QQ_CONFIRM_POLL_INTERVAL_SECONDS,
                     confirm_poll_count=QQ_CONFIRM_POLL_COUNT,
                 )
             )
-            if result.get("status") != "ok":
-                failed_reminder_at.append(reminder_at)
-                print(json.dumps({"ok": False, "item": item["occurrence_id"], "error": result}, ensure_ascii=False))
-                continue
-            state.setdefault("sent_reminders", {})[f"qq:{sr.reminder_key(item)}"] = sent_at
-            sr.prune_sent_reminders(state, now_dt)
-            sr.save_json(sr.STATE_FILE, state)
-            sent += 1
 
-        next_check = min(failed_reminder_at) - timedelta(seconds=1) if failed_reminder_at else now_dt
-        state["qq_last_reminder_check"] = next_check.isoformat()
-        sr.prune_sent_reminders(state, now_dt)
-        sr.save_json(sr.STATE_FILE, state)
-        print(json.dumps({"ok": len(failed_reminder_at) == 0, "sent": sent, "failed": len(failed_reminder_at)}, ensure_ascii=False))
+    result = orchestrate_due_reminders_push(
+        group_id=args.group_id,
+        dry_run=args.dry_run,
+        reminder_minutes=QQ_REMINDER_MINUTES,
+        runtime_lock=sr.runtime_lock,
+        lock_path=QQ_DUE_LOCK_FILE,
+        load_config=sr.load_config,
+        load_state=sr.load_state,
+        save_state=lambda state: sr.save_json(sr.STATE_FILE, state),
+        prune_sent_reminders=sr.prune_sent_reminders,
+        now=sr.now_cn,
+        parse_iso_datetime=sr.parse_iso_datetime,
+        get_items_for_date=lambda config, target_date: sr.get_schedule_for_date(config, target_date),
+        build_due_message=build_due_message,
+        deliver=deliver,
+        no_due_text=NO_DUE_TEXT,
+    )
+    if isinstance(result, str):
+        print(result)
+        return
+    print(json.dumps(result, ensure_ascii=False))
 
 
 if __name__ == "__main__":

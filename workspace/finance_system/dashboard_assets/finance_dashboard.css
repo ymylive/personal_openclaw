@@ -42,7 +42,7 @@ html {
   background: var(--page-bg);
 }
 
-body {
+body[data-module-scope="finance"] {
   margin: 0;
   min-height: 100vh;
   color: var(--ink);
@@ -54,11 +54,11 @@ body {
   overflow-x: hidden;
 }
 
-body.focus-mode-open {
+body[data-module-scope="finance"].focus-mode-open {
   overflow: hidden;
 }
 
-body::before {
+body[data-module-scope="finance"]::before {
   content: "";
   position: fixed;
   inset: 0;
@@ -70,7 +70,7 @@ body::before {
     linear-gradient(90deg, rgba(16, 35, 62, 0.028), transparent 22%, transparent 78%, rgba(16, 35, 62, 0.028));
 }
 
-body::after {
+body[data-module-scope="finance"]::after {
   content: "";
   position: fixed;
   inset: 0;

@@ -1,0 +1,44 @@
+:root {
+  --surface: #0b0b0f;
+  --accent: #7ad0ff;
+  --text: #f5f6f9;
+  --muted: #9ca1af;
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", "Noto Sans SC", system-ui, sans-serif;
+  background: radial-gradient(circle at top right, #11183c, #05070d 65%);
+  color: var(--text);
+}
+
+.page-shell {
+  min-height: 100vh;
+  padding: 4rem clamp(1.5rem, 4vw, 3rem);
+  display: grid;
+  gap: 2rem;
+}
+
+.hero {
+  max-width: 640px;
+}
+
+.hero h1 {
+  margin: 0.25rem 0;
+  font-size: clamp(2.25rem, 4vw, 3rem);
+}
+
+.summary-grid,
+.log-list {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 1rem;
+  padding: 1.25rem;
+  background: rgba(13, 17, 29, 0.8);
+  backdrop-filter: blur(18px);
+}
+
+.eyebrow {
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--muted);
+}

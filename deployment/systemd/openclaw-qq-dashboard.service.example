@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenClaw QQ Dashboard
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/node/.openclaw/workspace/openclaw
+ExecStart=/usr/bin/python3 /home/node/.openclaw/workspace/openclaw/workspace/modules/qq/qq_dashboard_server.py --bind 127.0.0.1 --port 18891
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

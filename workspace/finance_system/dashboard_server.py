@@ -11,8 +11,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote
 
-if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+script_dir = Path(__file__).resolve().parent
+workspace_root = script_dir.parent
+project_root = workspace_root.parent
+for candidate in (workspace_root, project_root):
+    candidate_path = str(candidate)
+    if candidate_path not in sys.path:
+        sys.path.insert(0, candidate_path)
 
 from finance_system.dashboard_access import (
     build_session_cookie_header,
@@ -28,6 +33,7 @@ from finance_system.dashboard_contracts import (
     build_status_payload,
 )
 from finance_system.dashboard_storage import DEFAULT_DATA_ROOT, list_history_dates, load_day_bundle, load_latest_bundle
+from workspace.modules.finance.dashboard import build_finance_bootstrap_payload
 
 ENTRY_ROUTE = "/finance"
 ACCESS_PREFIX = "/finance/access/"
@@ -37,6 +43,7 @@ API_HISTORY_INDEX = "/finance/api/history-index"
 API_ARCHIVE_PREFIX = "/finance/api/archive/"
 ASSET_PREFIX = "/finance/assets/"
 
+__all__ = ["build_finance_bootstrap_payload"]
 
 @dataclass(frozen=True)
 class DashboardServerConfig:
@@ -119,7 +126,12 @@ def create_handler(config: DashboardServerConfig):
                 history_dates=history_dates,
                 authorized=True,
             )
-            self._write_json(HTTPStatus.OK, payload)
+            bootstrap_payload = build_finance_bootstrap_payload(
+                date=date,
+                history_dates=history_dates,
+                delivery=payload,
+            )
+            self._write_json(HTTPStatus.OK, bootstrap_payload)
 
         def _handle_archive(self, path: str):
             if not self._require_api_session():
@@ -139,15 +151,21 @@ def create_handler(config: DashboardServerConfig):
                     build_error_payload("FINANCE_ARCHIVE_NOT_FOUND", f"Archive not found for {date}."),
                 )
                 return
+            history_dates = list_history_dates(config.data_dir)
             payload = build_day_payload(
                 mode="archive",
                 date=date,
                 valid_until=valid_until_for_date(current_cn_date(config.now_override)),
                 content=bundle,
-                history_dates=list_history_dates(config.data_dir),
+                history_dates=history_dates,
                 authorized=True,
             )
-            self._write_json(HTTPStatus.OK, payload)
+            bootstrap_payload = build_finance_bootstrap_payload(
+                date=date,
+                history_dates=history_dates,
+                delivery=payload,
+            )
+            self._write_json(HTTPStatus.OK, bootstrap_payload)
 
         def _handle_status(self):
             if not self._require_api_session():

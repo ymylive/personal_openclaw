@@ -6,8 +6,8 @@ After=network.target
 Type=simple
 WorkingDirectory=/root/.openclaw/workspace/finance_system
 Environment=FINANCE_DASHBOARD_SECRET=CHANGE_ME
-Environment=FINANCE_DASHBOARD_PUBLIC_BASE_URL=https://cornna.qzz.io
-Environment=FINANCE_DASHBOARD_PORT=18790
+Environment=FINANCE_DASHBOARD_PUBLIC_BASE_URL=https://cornna.qzz.io/finance/
+Environment=FINANCE_DASHBOARD_PORT=18892
 ExecStart=/usr/bin/python3 /root/.openclaw/workspace/finance_system/dashboard_server.py --host 127.0.0.1 --port ${FINANCE_DASHBOARD_PORT} --secret ${FINANCE_DASHBOARD_SECRET}
 Restart=always
 RestartSec=5

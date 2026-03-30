@@ -14,10 +14,6 @@ from typing import Iterator, List, Optional
 import requests
 from zoneinfo import ZoneInfo
 
-from workspace.modules.finance.status import build_finance_status
-
-__all__ = ["build_finance_status"]
-
 TZ = ZoneInfo("Asia/Shanghai")
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = BASE_DIR / "schedule_config.json"
