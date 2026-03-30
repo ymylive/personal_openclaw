@@ -3,18 +3,138 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenClaw QQ Dashboard</title>
+    <title>OpenClaw QQ Admin</title>
     <link rel="stylesheet" href="/qq/assets/qq_dashboard.css" />
   </head>
-  <body data-bootstrap-url="/qq/api/bootstrap">
+  <body
+    data-bootstrap-url="/qq/api/bootstrap"
+    data-config-url="/qq/api/config"
+    data-messages-url="/qq/api/messages"
+    data-qr-url="/qq/api/qr-image"
+    data-actions-base="/qq/api/actions/"
+  >
     <main class="page-shell">
       <header class="hero">
-        <p class="eyebrow">OpenClaw QQ</p>
-        <h1>QQ Listener Dashboard</h1>
-        <p id="hero-copy">连接状态、监听器、附件处理和日志都只在这里展示。</p>
+        <div>
+          <p class="eyebrow">OpenClaw QQ Admin</p>
+          <h1>NapCat / OpenClaw QQ 运维台</h1>
+          <p class="hero-copy">
+            管理单账号 NapCat 登录态、最近消息、自动聊天、人设、表情包策略和运行状态。
+          </p>
+        </div>
+        <div class="hero-actions">
+          <button id="refresh-button" class="primary-button" type="button">刷新状态</button>
+        </div>
       </header>
-      <section id="summary-grid" class="summary-grid"></section>
-      <section id="log-list" class="log-list"></section>
+
+      <section class="grid top-grid">
+        <article class="panel">
+          <h2>账号状态</h2>
+          <div id="account-card" class="kv-grid"></div>
+        </article>
+        <article class="panel">
+          <h2>连接状态</h2>
+          <div id="connection-card" class="kv-grid"></div>
+        </article>
+        <article class="panel">
+          <h2>自动聊天</h2>
+          <div id="automation-card" class="kv-grid"></div>
+        </article>
+      </section>
+
+      <section class="grid middle-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <h2>扫码登录</h2>
+            <button id="restart-napcat-button" class="ghost-button" type="button">重启 NapCat</button>
+          </div>
+          <div id="qr-state" class="muted"></div>
+          <div class="qr-shell">
+            <img id="qr-image" alt="NapCat QR" />
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <h2>最近消息</h2>
+            <div class="inline-actions">
+              <input id="group-id-input" class="field-control compact" placeholder="群号" />
+              <button id="load-messages-button" class="ghost-button" type="button">拉取</button>
+            </div>
+          </div>
+          <div id="message-list" class="message-list"></div>
+        </article>
+      </section>
+
+      <section class="grid bottom-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <h2>人设与自动聊天</h2>
+            <button id="save-config-button" class="primary-button" type="button">保存配置</button>
+          </div>
+          <label class="field">
+            <span>System Prompt / 人设</span>
+            <textarea id="system-prompt-input" rows="10"></textarea>
+          </label>
+          <div class="field-row">
+            <label class="field">
+              <span>Monitor Agent</span>
+              <input id="monitor-agent-input" class="field-control" />
+            </label>
+            <label class="field">
+              <span>Reply Agent</span>
+              <input id="reply-agent-input" class="field-control" />
+            </label>
+          </div>
+          <label class="field checkbox-field">
+            <input id="automation-enabled-input" type="checkbox" />
+            <span>启用自动聊天监测</span>
+          </label>
+          <label class="field">
+            <span>监测模块配置 JSON</span>
+            <textarea id="monitor-settings-input" rows="8"></textarea>
+          </label>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <h2>表情包与动作</h2>
+            <button id="restart-automation-button" class="ghost-button" type="button">重启监测模块</button>
+          </div>
+          <label class="field">
+            <span>表情包配置 JSON</span>
+            <textarea id="sticker-settings-input" rows="8"></textarea>
+          </label>
+          <div class="field-row">
+            <label class="field">
+              <span>发送消息到群</span>
+              <input id="send-message-group-input" class="field-control" placeholder="群号" />
+            </label>
+            <label class="field">
+              <span>消息内容</span>
+              <input id="send-message-body-input" class="field-control" placeholder="消息内容" />
+            </label>
+          </div>
+          <button id="send-message-button" class="ghost-button" type="button">发送消息</button>
+          <div class="field-row">
+            <label class="field">
+              <span>表情包目标群</span>
+              <input id="send-sticker-group-input" class="field-control" placeholder="群号" />
+            </label>
+            <label class="field">
+              <span>图片 URL / 文件路径</span>
+              <input id="send-sticker-ref-input" class="field-control" placeholder="https://... 或 /path/to/file" />
+            </label>
+          </div>
+          <button id="send-sticker-button" class="ghost-button" type="button">发送表情包</button>
+        </article>
+      </section>
+
+      <section class="panel">
+        <h2>运行日志</h2>
+        <div id="alerts-list" class="alerts"></div>
+        <pre id="logs-view" class="logs-view"></pre>
+      </section>
     </main>
     <script src="/qq/assets/qq_dashboard.js"></script>
   </body>
