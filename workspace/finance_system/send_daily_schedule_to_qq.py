@@ -8,6 +8,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from qq_direct_utils import load_qq_ws_config, send_group_message
+from workspace.modules.finance.push import build_finance_push_request
+
+__all__ = ["build_finance_push_request"]
 
 SCHEDULE_CLI = Path('/home/node/.openclaw/workspace/finance_system/schedule_reminder.py')
 DEFAULT_GROUP_ID = 1061966199  # 258班学习交流群

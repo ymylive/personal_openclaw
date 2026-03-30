@@ -6,6 +6,9 @@ from datetime import timedelta
 
 import schedule_reminder as sr
 from qq_direct_utils import load_qq_ws_config, send_group_message
+from workspace.modules.finance.push import build_finance_push_request
+
+__all__ = ["build_finance_push_request"]
 
 DEFAULT_GROUP_ID = 1061966199
 QQ_REMINDER_MINUTES = 30

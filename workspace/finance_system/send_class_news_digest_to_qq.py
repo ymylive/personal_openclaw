@@ -10,7 +10,10 @@ from xml.etree import ElementTree as ET
 
 import requests
 from qq_direct_utils import load_qq_ws_config, send_group_message
+from workspace.modules.finance.push import build_finance_push_request
 from zoneinfo import ZoneInfo
+
+__all__ = ["build_finance_push_request"]
 
 DEFAULT_GROUP_ID = 1061966199  # 258班学习交流群
 TZ = ZoneInfo('Asia/Shanghai')
