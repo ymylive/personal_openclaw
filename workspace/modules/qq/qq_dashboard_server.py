@@ -25,6 +25,10 @@ QR_IMAGE_CANDIDATES = [
     Path("/root/napcat_qrcode_live.png"),
     Path("/root/napcat_qrcode.png"),
 ]
+NAPCAT_ONEBOT_CONFIG_CANDIDATES = [
+    Path("/root/napcat/config/onebot11_1010679324.json"),
+    Path("/root/napcat/config/onebot11.json"),
+]
 
 
 def build_bootstrap_payload(
@@ -155,6 +159,49 @@ def _docker_container_state(name: str) -> dict:
     }
 
 
+def _docker_container_ip(name: str) -> str:
+    ok, output = _run_command(
+        ["docker", "inspect", "-f", "{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}", name]
+    )
+    return output.strip() if ok and output else ""
+
+
+def _read_napcat_onebot_server() -> dict:
+    for candidate in NAPCAT_ONEBOT_CONFIG_CANDIDATES:
+        if not candidate.exists():
+            continue
+        payload = read_json(candidate, {})
+        servers = ((((payload.get("network") or {}).get("websocketServers")) or []))
+        if not servers:
+            continue
+        server = servers[0] or {}
+        return {
+            "host": str(server.get("host") or ""),
+            "port": int(server.get("port") or 0),
+            "token": str(server.get("token") or ""),
+            "name": str(server.get("name") or ""),
+        }
+    return {"host": "", "port": 0, "token": "", "name": ""}
+
+
+def resolve_runtime_onebot(qq_config: dict) -> dict:
+    configured_ws = str(qq_config.get("wsUrl") or "")
+    configured_token = str(qq_config.get("accessToken") or "")
+    napcat_server = _read_napcat_onebot_server()
+    container_ip = _docker_container_ip("napcat-qq")
+    if napcat_server.get("port") and container_ip:
+        return {
+            "wsUrl": f"ws://{container_ip}:{napcat_server['port']}",
+            "accessToken": str(napcat_server.get("token") or configured_token),
+            "source": "napcat-config",
+        }
+    return {
+        "wsUrl": configured_ws,
+        "accessToken": configured_token,
+        "source": "openclaw-config",
+    }
+
+
 async def _onebot_call(ws_url: str, token: str, action: str, params: dict, echo: str) -> dict:
     import websockets
 
@@ -178,7 +225,8 @@ def call_onebot(ws_url: str, token: str, action: str, params: dict | None = None
 
 
 def get_login_info(qq_config: dict) -> dict:
-    payload = call_onebot(str(qq_config.get("wsUrl") or ""), str(qq_config.get("accessToken") or ""), "get_login_info")
+    runtime = resolve_runtime_onebot(qq_config)
+    payload = call_onebot(str(runtime.get("wsUrl") or ""), str(runtime.get("accessToken") or ""), "get_login_info")
     data = (payload or {}).get("data") or {}
     user_id = int(data.get("user_id") or 0)
     nickname = str(data.get("nickname") or "")
@@ -192,9 +240,10 @@ def get_login_info(qq_config: dict) -> dict:
 def get_recent_messages(qq_config: dict, group_id: int | None, limit: int = 20) -> list[dict]:
     if not group_id:
         return []
+    runtime = resolve_runtime_onebot(qq_config)
     payload = call_onebot(
-        str(qq_config.get("wsUrl") or ""),
-        str(qq_config.get("accessToken") or ""),
+        str(runtime.get("wsUrl") or ""),
+        str(runtime.get("accessToken") or ""),
         "get_group_msg_history",
         {"group_id": int(group_id)},
     )
@@ -254,6 +303,7 @@ def read_dashboard_snapshot(config_path: Path | None = None, workspace_root: Pat
     qq_config = qq_channel_config(config)
     root = workspace_root or resolve_workspace_root()
     napcat = _docker_container_state("napcat-qq")
+    runtime = resolve_runtime_onebot(qq_config)
     account = get_login_info(qq_config)
     default_group_id = _pick_default_group_id(qq_config)
     recent_messages = get_recent_messages(qq_config, default_group_id)
@@ -273,6 +323,8 @@ def read_dashboard_snapshot(config_path: Path | None = None, workspace_root: Pat
             "image": napcat["image"],
             "onebotConfigured": bool(qq_config.get("wsUrl")),
             "wsUrl": str(qq_config.get("wsUrl") or ""),
+            "runtimeWsUrl": str(runtime.get("wsUrl") or ""),
+            "runtimeSource": str(runtime.get("source") or ""),
             "napcatHttpUrl": "http://127.0.0.1:6099",
         },
         listener={
