@@ -3,139 +3,283 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenClaw QQ Admin</title>
+    <title>OpenClaw QQ Dashboard</title>
     <link rel="stylesheet" href="/qq/assets/qq_dashboard.css" />
   </head>
-  <body
-    data-bootstrap-url="/qq/api/bootstrap"
-    data-config-url="/qq/api/config"
-    data-messages-url="/qq/api/messages"
-    data-qr-url="/qq/api/qr-image"
-    data-actions-base="/qq/api/actions/"
-  >
-    <main class="page-shell">
+  <body data-bootstrap-url="/qq/api/bootstrap" data-status-url="/qq/api/status" data-module-scope="qq" data-title-key="title">
+    <div class="page-shell" data-state="idle">
+      <div class="background-grid" aria-hidden="true"></div>
       <header class="hero">
-        <div>
-          <p class="eyebrow">OpenClaw QQ Admin</p>
-          <h1>NapCat / OpenClaw QQ 运维台</h1>
-          <p class="hero-copy">
-            管理单账号 NapCat 登录态、最近消息、自动聊天、人设、表情包策略和运行状态。
+        <div class="hero__text">
+          <p class="hero__eyebrow" data-i18n="hero.eyebrow">OpenClaw QQ operations cockpit</p>
+          <div class="hero__title-group">
+            <h1 data-i18n="hero.title">QQ Module Dashboard</h1>
+            <span class="hero__pill" data-health-level>Checking</span>
+          </div>
+          <p class="hero__subtitle" data-hero-summary>
+            Monitoring listener health, attachment flow, and recent runtime signals.
           </p>
         </div>
-        <div class="hero-actions">
-          <button id="refresh-button" class="primary-button" type="button">刷新状态</button>
+        <div class="hero__actions">
+          <div class="language-switch">
+            <span class="hero__meta" data-language-label>语言</span>
+            <button class="language-toggle" type="button" data-language-toggle>English</button>
+          </div>
+          <p class="hero__meta hero__meta--mode" data-current-mode>Mode: bootstrap</p>
+          <button class="btn" type="button" data-refresh>
+            <span class="btn__icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>
+            <span data-i18n="hero.refresh">Refresh now</span>
+          </button>
+          <p class="hero__meta" data-generated-at>Last updated: —</p>
         </div>
       </header>
 
-      <section class="grid top-grid">
-        <article class="panel">
-          <h2>账号状态</h2>
-          <div id="account-card" class="kv-grid"></div>
+      <section class="metrics-strip" aria-label="Snapshot metrics">
+        <article class="metric-card" data-animate>
+          <div class="metric-card__icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg></div>
+          <p class="metric-card__label" data-i18n="metrics.connection">Connection</p>
+          <p class="metric-card__value" data-connection-status>Loading…</p>
         </article>
-        <article class="panel">
-          <h2>连接状态</h2>
-          <div id="connection-card" class="kv-grid"></div>
+        <article class="metric-card" data-animate>
+          <div class="metric-card__icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg></div>
+          <p class="metric-card__label" data-i18n="metrics.listenerCount">Listener count</p>
+          <p class="metric-card__value" data-listener-count>—</p>
         </article>
-        <article class="panel">
-          <h2>自动聊天</h2>
-          <div id="automation-card" class="kv-grid"></div>
+        <article class="metric-card" data-animate>
+          <div class="metric-card__icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+          <p class="metric-card__label" data-i18n="metrics.allowedGroups">Allowed groups</p>
+          <p class="metric-card__value" data-group-count>—</p>
+        </article>
+        <article class="metric-card" data-animate>
+          <div class="metric-card__icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
+          <p class="metric-card__label" data-i18n="metrics.monitoredGroups">Monitored groups</p>
+          <p class="metric-card__value" data-monitored-count>—</p>
+        </article>
+        <article class="metric-card" data-animate>
+          <div class="metric-card__icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></div>
+          <p class="metric-card__label" data-i18n="metrics.attachments">Attachments</p>
+          <p class="metric-card__value" data-attachment-status>—</p>
+        </article>
+        <article class="metric-card" data-animate>
+          <div class="metric-card__icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
+          <p class="metric-card__label" data-i18n="metrics.recentError">Recent error</p>
+          <p class="metric-card__value" data-last-error>None</p>
         </article>
       </section>
 
-      <section class="grid middle-grid">
-        <article class="panel">
-          <div class="panel-heading">
-            <h2>扫码登录</h2>
-            <button id="restart-napcat-button" class="ghost-button" type="button">重启 NapCat</button>
+      <main class="dashboard-grid">
+        <section class="panel listener-panel" aria-label="Listener coverage" data-animate>
+          <div class="panel__header">
+            <p class="panel__eyebrow" data-i18n="listener.kicker">Listener coverage</p>
+            <h2 data-i18n="listener.title">Where QQ is online</h2>
           </div>
-          <div id="qr-state" class="muted"></div>
-          <div class="qr-shell">
-            <img id="qr-image" alt="NapCat QR" />
-          </div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-heading">
-            <h2>最近消息</h2>
-            <div class="inline-actions">
-              <input id="group-id-input" class="field-control compact" placeholder="群号" />
-              <button id="load-messages-button" class="ghost-button" type="button">拉取</button>
+          <div class="panel__content" data-listener-cover>
+            <div class="status-row">
+              <span data-i18n="listener.runtime">Runtime</span>
+              <strong data-listener-running>—</strong>
+            </div>
+            <div class="group-list" data-groups data-group-label-key="listener.allowedGroupLabel" data-group-label="Allowed groups"></div>
+            <div class="group-list" data-monitored-groups data-group-label-key="listener.monitoredGroupLabel" data-group-label="Monitored groups"></div>
+            <div class="panel__note" data-last-message-ids>
+              Waiting for messages...
             </div>
           </div>
-          <div id="message-list" class="message-list"></div>
-        </article>
-      </section>
+        </section>
 
-      <section class="grid bottom-grid">
-        <article class="panel">
-          <div class="panel-heading">
-            <h2>人设与自动聊天</h2>
-            <button id="save-config-button" class="primary-button" type="button">保存配置</button>
+        <div class="panel-stack panel-stack--center">
+        <section class="panel login-panel" aria-label="QQ login" data-animate data-login-panel>
+          <div class="panel__header">
+            <p class="panel__eyebrow" data-i18n="login.kicker">QQ login</p>
+            <h2 data-i18n="login.title">Scan to reconnect</h2>
           </div>
-          <label class="field">
-            <span>System Prompt / 人设</span>
-            <textarea id="system-prompt-input" rows="10"></textarea>
-          </label>
-          <div class="field-row">
-            <label class="field">
-              <span>Monitor Agent</span>
-              <input id="monitor-agent-input" class="field-control" />
-            </label>
-            <label class="field">
-              <span>Reply Agent</span>
-              <input id="reply-agent-input" class="field-control" />
-            </label>
+          <div class="panel__content login-panel__content">
+            <p class="panel__note login-panel__summary" data-login-summary>
+              QR sign-in status will appear here.
+            </p>
+            <div class="login-panel__qr-shell">
+              <img class="login-panel__qr" alt="QQ login QR code" data-login-qr hidden />
+              <div class="empty-state" data-login-empty>QR code not available yet.</div>
+            </div>
+            <div class="status-row">
+              <span data-i18n="login.status">Login status</span>
+              <strong data-login-status>—</strong>
+            </div>
+            <a class="login-panel__link" data-login-link href="#" target="_blank" rel="noreferrer noopener" hidden>Open decode link</a>
           </div>
-          <label class="field checkbox-field">
-            <input id="automation-enabled-input" type="checkbox" />
-            <span>启用自动聊天监测</span>
-          </label>
-          <label class="field">
-            <span>监测模块配置 JSON</span>
-            <textarea id="monitor-settings-input" rows="8"></textarea>
-          </label>
-        </article>
+        </section>
 
-        <article class="panel">
-          <div class="panel-heading">
-            <h2>表情包与动作</h2>
-            <button id="restart-automation-button" class="ghost-button" type="button">重启监测模块</button>
+        <section class="panel activity-panel" aria-label="Runtime notes" data-animate>
+          <div class="panel__header">
+            <p class="panel__eyebrow" data-i18n="activity.kicker">Runtime notes</p>
+            <h2 data-i18n="activity.title">Signals & health</h2>
           </div>
-          <label class="field">
-            <span>表情包配置 JSON</span>
-            <textarea id="sticker-settings-input" rows="8"></textarea>
-          </label>
-          <div class="field-row">
-            <label class="field">
-              <span>发送消息到群</span>
-              <input id="send-message-group-input" class="field-control" placeholder="群号" />
-            </label>
-            <label class="field">
-              <span>消息内容</span>
-              <input id="send-message-body-input" class="field-control" placeholder="消息内容" />
-            </label>
+          <div class="panel__content" data-activity>
+            <p class="activity__summary" data-health-summary>
+              Awaiting QQ health telemetry.
+            </p>
+            <dl class="activity__list">
+              <div>
+                <dt data-i18n="activity.wsUrl">Websocket URL</dt>
+                <dd data-ws-url>—</dd>
+              </div>
+              <div>
+                <dt data-i18n="activity.token">Token</dt>
+                <dd data-has-token>—</dd>
+              </div>
+              <div>
+                <dt data-i18n="activity.extractor">Extractor</dt>
+                <dd data-extractor-status>—</dd>
+              </div>
+            </dl>
+            <div class="panel__note" data-attachment-hints>
+              Attachment hints will appear here.
+            </div>
           </div>
-          <button id="send-message-button" class="ghost-button" type="button">发送消息</button>
-          <div class="field-row">
-            <label class="field">
-              <span>表情包目标群</span>
-              <input id="send-sticker-group-input" class="field-control" placeholder="群号" />
-            </label>
-            <label class="field">
-              <span>图片 URL / 文件路径</span>
-              <input id="send-sticker-ref-input" class="field-control" placeholder="https://... 或 /path/to/file" />
-            </label>
-          </div>
-          <button id="send-sticker-button" class="ghost-button" type="button">发送表情包</button>
-        </article>
-      </section>
+        </section>
 
-      <section class="panel">
-        <h2>运行日志</h2>
-        <div id="alerts-list" class="alerts"></div>
-        <pre id="logs-view" class="logs-view"></pre>
-      </section>
-    </main>
-    <script src="/qq/assets/qq_dashboard.js"></script>
+        <section class="panel recent-panel" aria-label="Recent activity" data-animate>
+          <div class="panel__header">
+            <p class="panel__eyebrow" data-i18n="recent.kicker">Recent activity</p>
+            <h2 data-i18n="recent.title">Live observations</h2>
+          </div>
+          <div class="panel__content" data-recent-activity>
+            <div class="empty-state">Recent QQ activity will appear after the first bootstrap.</div>
+          </div>
+        </section>
+
+        <section class="panel groups-editor-panel" aria-label="Group management" data-animate>
+          <div class="panel__header">
+            <p class="panel__eyebrow" data-i18n="groups.kicker">Group control</p>
+            <h2 data-i18n="groups.title">Monitored group policy</h2>
+          </div>
+          <div class="panel__content">
+            <p class="panel__note" data-group-editor-summary>
+              Loading editable QQ group records.
+            </p>
+            <div class="editor-toolbar">
+              <button class="btn btn--subtle" type="button" data-group-add>
+                <span data-i18n="groups.add">Add group row</span>
+              </button>
+            </div>
+            <div class="group-editor-table">
+              <div class="group-editor-head">
+                <span data-i18n="groups.columns.id">Group ID</span>
+                <span data-i18n="groups.columns.enabled">Enabled</span>
+                <span data-i18n="groups.columns.label">Label</span>
+                <span data-i18n="groups.columns.focus">Focus</span>
+                <span data-i18n="groups.columns.priority">Priority</span>
+                <span data-i18n="groups.columns.reply">Reply</span>
+                <span data-i18n="groups.columns.sticker">Sticker</span>
+                <span data-i18n="groups.columns.intensity">Intensity</span>
+                <span data-i18n="groups.columns.cooldown">Cooldown</span>
+                <span data-i18n="groups.columns.actions">Actions</span>
+              </div>
+              <div class="group-editor-rows" data-group-rows>
+                <div class="empty-state">No editable group rows yet.</div>
+              </div>
+            </div>
+          </div>
+        </section>
+        </div>
+
+        <div class="panel-stack">
+          <section class="panel sticker-settings-panel" aria-label="Sticker settings" data-animate>
+            <div class="panel__header">
+              <p class="panel__eyebrow" data-i18n="stickers.kicker">Sticker packs</p>
+              <h2 data-i18n="stickers.title">Balanced local sticker policy</h2>
+            </div>
+            <div class="panel__content">
+              <p class="panel__note" data-config-status>
+                Loading QQ configuration API.
+              </p>
+              <label class="form-field">
+                <span data-i18n="stickers.root">Sticker root directory</span>
+                <input class="text-input" type="text" data-sticker-root placeholder="/data/stickers" />
+              </label>
+              <div class="sticker-settings-grid">
+                <label class="toggle-field">
+                  <input type="checkbox" data-sticker-enabled />
+                  <span data-i18n="stickers.enabled">Enable sticker sending</span>
+                </label>
+                <label class="form-field">
+                  <span data-i18n="stickers.mode">Global mode</span>
+                  <select class="text-input" data-sticker-mode>
+                    <option value="balanced" data-i18n="stickers.mode.balanced">Balanced</option>
+                    <option value="text-only" data-i18n="stickers.mode.textOnly">Text only</option>
+                    <option value="sticker-first" data-i18n="stickers.mode.stickerFirst">Sticker first</option>
+                  </select>
+                </label>
+                <label class="form-field">
+                  <span data-i18n="stickers.defaultIntensity">Default sticker intensity</span>
+                  <input class="text-input" type="number" min="0" max="100" step="1" data-sticker-default-intensity />
+                </label>
+                <label class="form-field">
+                  <span data-i18n="stickers.defaultCooldown">Default cooldown (seconds)</span>
+                  <input class="text-input" type="number" min="0" step="1" data-sticker-default-cooldown />
+                </label>
+              </div>
+              <div class="editor-toolbar">
+                <button class="btn btn--subtle" type="button" data-sticker-refresh>
+                  <span data-i18n="stickers.refresh">Refresh sticker scan</span>
+                </button>
+                <button class="btn btn--ghost" type="button" data-config-reset>
+                  <span data-i18n="config.reload">Reload config</span>
+                </button>
+                <button class="btn" type="button" data-config-save>
+                  <span data-i18n="config.save">Save config</span>
+                </button>
+              </div>
+              <p class="panel__note" data-sticker-summary>
+                Loading sticker pack inventory.
+              </p>
+              <div class="sticker-pack-list" data-sticker-packs>
+                <div class="empty-state">Sticker inventory will appear after scan.</div>
+              </div>
+              <div class="panel__note" data-sticker-problems></div>
+            </div>
+          </section>
+
+          <section class="panel attachment-panel" aria-label="Attachment pipeline" data-animate>
+            <div class="panel__header">
+              <p class="panel__eyebrow" data-i18n="attachments.kicker">Attachment pipeline</p>
+              <h2 data-i18n="attachments.title">Media & extracts</h2>
+            </div>
+            <div class="panel__content" data-attachment-panel>
+              <p class="panel__note" data-attachment-config>
+                Waiting for attachment capability details.
+              </p>
+              <ul class="attachment-list" data-supported-hints></ul>
+            </div>
+          </section>
+
+          <section class="panel safeguards-panel" aria-label="Safeguards" data-animate>
+            <div class="panel__header">
+              <p class="panel__eyebrow" data-i18n="safeguards.kicker">Safeguards</p>
+              <h2 data-i18n="safeguards.title">Configuration guardrails</h2>
+            </div>
+            <div class="panel__content" data-safeguards>
+              <div class="empty-state">Safeguards will render after runtime data loads.</div>
+            </div>
+          </section>
+
+          <section class="panel logs-panel" aria-label="Latest logs" data-animate>
+            <div class="panel__header">
+              <p class="panel__eyebrow" data-i18n="logs.kicker">Logs</p>
+              <h2 data-i18n="logs.title">Activity trail</h2>
+            </div>
+            <div class="panel__content" data-logs>
+              <p class="panel__note" data-logs-empty>
+                Logs will stream in once QQ writes data.
+              </p>
+            </div>
+          </section>
+        </div>
+      </main>
+
+      <footer class="dashboard-footer" aria-label="Branding">
+        OpenClaw QQ Module
+      </footer>
+    </div>
+    <script src="/qq/assets/qq_dashboard.js" defer></script>
   </body>
 </html>

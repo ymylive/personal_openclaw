@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
+import path from "node:path";
 import WebSocket from "/app/node_modules/ws/index.js";
 
 const execFileAsync = promisify(execFile);
@@ -26,6 +27,16 @@ const SCAN_MODEL_FALLBACK = "z-ai/glm-4.5-air:free";
 const DEFAULT_MONITOR_AGENT_ID = "qqmonitor";
 const DEFAULT_REPLY_AGENT_ID = "qqreply";
 const DEFAULT_SCAN_FALLBACK_AGENT_ID = "qqreplylite";
+const STICKER_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
+const DEFAULT_STICKER_SETTINGS = {
+  enabled: false,
+  mode: "balanced",
+  rootPath: "",
+  defaultIntensity: 50,
+  defaultCooldown: 0,
+  sharedMediaHostDir: "/home/node/.openclaw/shared_media",
+  sharedMediaContainerDir: "/openclaw_media",
+};
 
 const DEFAULT_GROUPS = [
   { id: 1016414937, name: "25计软学习互助", focus: "software study help, debugging, coursework, and casual study chat" },
@@ -58,13 +69,19 @@ function parseGroupIdList(value) {
 
 function normalizeGroupEntry(item) {
   if (!item || typeof item !== "object") return null;
-  const id = Number(item.id);
+  const id = Number(item.id ?? item.groupId);
   if (!Number.isFinite(id) || id <= 0) return null;
   const fallback = DEFAULT_GROUPS.find((group) => group.id === id);
   return {
     id,
     name: String(item.name || fallback?.name || `group_${id}`).trim() || `group_${id}`,
     focus: String(item.focus || fallback?.focus || "study help and casual chat").trim() || "study help and casual chat",
+    enabled: Boolean(item.enabled ?? true),
+    priority: Number.isFinite(Number(item.priority)) ? Math.trunc(Number(item.priority)) : 0,
+    replyEnabled: Boolean(item.replyEnabled ?? item.enabled ?? true),
+    stickerEnabled: Boolean(item.stickerEnabled ?? true),
+    stickerIntensity: Number.isFinite(Number(item.stickerIntensity)) ? Math.max(0, Math.min(100, Math.trunc(Number(item.stickerIntensity)))) : 50,
+    cooldownSeconds: Number.isFinite(Number(item.cooldownSeconds)) ? Math.max(0, Math.trunc(Number(item.cooldownSeconds))) : 0,
   };
 }
 
@@ -73,16 +90,16 @@ function resolveGroups(cfg) {
   const configured = Array.isArray(qq.monitorGroups)
     ? qq.monitorGroups.map((item) => normalizeGroupEntry(item)).filter(Boolean)
     : [];
-  if (configured.length > 0) return configured;
+  if (configured.length > 0) return configured.sort((a, b) => (b.priority - a.priority) || (a.id - b.id));
 
   const ids = parseGroupIdList(qq.allowedGroups || qq.ambientChatGroups);
   if (ids.length > 0) {
     return ids.map((id) => {
       const fallback = DEFAULT_GROUPS.find((group) => group.id === id);
-      return fallback || { id, name: `group_${id}`, focus: "study help and casual chat" };
-    });
+      return normalizeGroupEntry(fallback || { id, name: `group_${id}`, focus: "study help and casual chat" });
+    }).filter(Boolean);
   }
-  return DEFAULT_GROUPS;
+  return DEFAULT_GROUPS.map((item) => normalizeGroupEntry(item)).filter(Boolean);
 }
 
 function normalizePositiveNumber(value, fallback, minimum = 1) {
@@ -101,6 +118,20 @@ function resolveMonitorSettings(cfg) {
     strongSignalScore: normalizePositiveNumber(raw.strongSignalScore, DEFAULT_MONITOR_SETTINGS.strongSignalScore),
     scanSignalScore: normalizePositiveNumber(raw.scanSignalScore, DEFAULT_MONITOR_SETTINGS.scanSignalScore),
     agentTimeoutSeconds: normalizePositiveNumber(raw.agentTimeoutSeconds, DEFAULT_MONITOR_SETTINGS.agentTimeoutSeconds),
+  };
+}
+
+function resolveStickerSettings(cfg) {
+  const qq = ((cfg?.channels || {}).qq || {});
+  const raw = (qq.stickerPacks && typeof qq.stickerPacks === "object") ? qq.stickerPacks : {};
+  return {
+    enabled: Boolean(raw.enabled),
+    mode: ["balanced", "text-only", "sticker-first"].includes(String(raw.mode || "")) ? String(raw.mode) : DEFAULT_STICKER_SETTINGS.mode,
+    rootPath: String(raw.rootPath || "").trim(),
+    defaultIntensity: normalizePositiveNumber(raw.defaultIntensity, DEFAULT_STICKER_SETTINGS.defaultIntensity, 0),
+    defaultCooldown: normalizePositiveNumber(raw.cooldownSeconds, DEFAULT_STICKER_SETTINGS.defaultCooldown, 0),
+    sharedMediaHostDir: String(qq.sharedMediaHostDir || DEFAULT_STICKER_SETTINGS.sharedMediaHostDir).trim() || DEFAULT_STICKER_SETTINGS.sharedMediaHostDir,
+    sharedMediaContainerDir: String(qq.sharedMediaContainerDir || DEFAULT_STICKER_SETTINGS.sharedMediaContainerDir).trim() || DEFAULT_STICKER_SETTINGS.sharedMediaContainerDir,
   };
 }
 
@@ -195,6 +226,91 @@ function updateStateMeta(state, groups, monitorSettings) {
     monitorSettings: { ...monitorSettings },
   };
   return safeState;
+}
+
+async function listStickerEmotionPacks(rootPath) {
+  const cleanRoot = String(rootPath || "").trim();
+  if (!cleanRoot) return [];
+  let entries = [];
+  try {
+    entries = await fs.readdir(cleanRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const packs = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const dirPath = path.join(cleanRoot, entry.name);
+    let files = [];
+    try {
+      files = await fs.readdir(dirPath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    const images = files
+      .filter((item) => item.isFile() && STICKER_IMAGE_EXTENSIONS.has(path.extname(item.name).toLowerCase()))
+      .map((item) => path.join(dirPath, item.name));
+    if (images.length === 0) continue;
+    packs.push({ emotion: entry.name, images });
+  }
+  return packs.sort((a, b) => a.emotion.localeCompare(b.emotion, "zh-CN"));
+}
+
+function buildStickerContext(group, stickerSettings, stickerPacks, prevState = {}) {
+  const enabled = Boolean(
+    stickerSettings.enabled
+    && group?.enabled !== false
+    && group?.replyEnabled !== false
+    && group?.stickerEnabled !== false
+    && stickerSettings.mode !== "text-only"
+    && Array.isArray(stickerPacks)
+    && stickerPacks.length > 0
+  );
+  const cooldownSeconds = Number(group?.cooldownSeconds ?? stickerSettings.defaultCooldown ?? 0) || 0;
+  const lastStickerAt = Date.parse(String(prevState?.lastStickerAt || "")) || 0;
+  const cooldownOpen = !cooldownSeconds || !lastStickerAt || (Date.now() - lastStickerAt >= cooldownSeconds * 1000);
+  const emotions = enabled && cooldownOpen ? stickerPacks.map((item) => item.emotion) : [];
+  return {
+    enabled: enabled && cooldownOpen,
+    mode: String(stickerSettings.mode || "balanced"),
+    defaultIntensity: Number(group?.stickerIntensity ?? stickerSettings.defaultIntensity ?? 50) || 50,
+    cooldownSeconds,
+    cooldownOpen,
+    emotions,
+  };
+}
+
+function parseStickerDirective(rawText = "") {
+  const matched = String(rawText || "").match(/\[\[sticker:([^\]]+)\]\]\s*$/i);
+  if (!matched) return { text: String(rawText || "").trim(), stickerEmotion: "" };
+  const stickerEmotion = String(matched[1] || "").trim();
+  const text = String(rawText || "").replace(/\[\[sticker:[^\]]+\]\]\s*$/i, "").trim();
+  return { text, stickerEmotion };
+}
+
+function selectStickerPack(stickerPacks, stickerEmotion) {
+  const target = String(stickerEmotion || "").trim().toLowerCase();
+  if (!target || target === "none") return null;
+  return (Array.isArray(stickerPacks) ? stickerPacks : []).find((item) => String(item.emotion || "").trim().toLowerCase() === target) || null;
+}
+
+async function stageStickerForNapCat(stickerSettings, stickerPack, sessionKey) {
+  if (!stickerPack || !Array.isArray(stickerPack.images) || stickerPack.images.length === 0) return null;
+  const hostDir = String(stickerSettings.sharedMediaHostDir || "").trim();
+  const containerDir = String(stickerSettings.sharedMediaContainerDir || "").trim();
+  if (!hostDir || !containerDir) return null;
+  const selected = stickerPack.images[createHash("sha1").update(String(sessionKey || stickerPack.emotion)).digest()[0] % stickerPack.images.length];
+  const ext = path.extname(selected).toLowerCase() || ".png";
+  const safeEmotion = String(stickerPack.emotion || "sticker").replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "sticker";
+  const filename = `${safeEmotion}-${sessionKey || Date.now()}${ext}`;
+  const destination = path.join(hostDir, filename);
+  try {
+    await fs.mkdir(hostDir, { recursive: true });
+    await fs.copyFile(selected, destination);
+  } catch {
+    return null;
+  }
+  return `[CQ:image,file=file://${containerDir.replace(/\/$/, "")}/${filename}]`;
 }
 
 async function loadJson(path, fallback) {
@@ -561,11 +677,20 @@ function buildDecisionPrompt(group, transcript, signals) {
   ].join("\n");
 }
 
-function buildReplyPrompt(group, transcript, signals, styleQuotes = []) {
+function buildReplyPrompt(group, transcript, signals, styleQuotes = [], stickerContext = null) {
   const records = transcript.map((item) => `${item.senderName}: ${item.text}`).join("\n");
   const styleBlock = styleQuotes.length
     ? ["Style examples (learn the tone, do not copy mechanically):", ...styleQuotes.map((line) => `- ${line}`)].join("\n")
     : "";
+  const stickerBlock = stickerContext?.enabled
+    ? [
+        `Local sticker packs available: ${stickerContext.emotions.join(", ")}.`,
+        `Sticker mode: ${stickerContext.mode}; intensity=${stickerContext.defaultIntensity}; per-group cooldown_seconds=${stickerContext.cooldownSeconds}.`,
+        "If one local sticker would clearly improve the message, append a final line exactly like [[sticker:emotion-name]] using only one emotion from the available list.",
+        "If no sticker should be sent, append [[sticker:none]].",
+        "Do not mention the sticker directive in the visible message text.",
+      ].join("\n")
+    : "Sticker sending is disabled for this reply. Do not append any sticker directive.";
   return [
     "You are Grantly from Knight Academy.",
     "You are a tiger beastman speaking naturally in a modern QQ group.",
@@ -591,6 +716,7 @@ function buildReplyPrompt(group, transcript, signals, styleQuotes = []) {
     "No customer-service phrasing. No tutor voice. No summary voice. No fake enthusiasm.",
     "Do not mention transcript, analysis, scanning, bot, AI, or rules.",
     "Plain text only. No markdown. No emoji. No decorative symbols.",
+    stickerBlock,
     styleBlock,
     "Recent messages:",
     records,
@@ -761,14 +887,15 @@ async function runReplyWithRetry(agentId, sessionId, prompt, settings = DEFAULT_
     const thinking = attempts[index];
     const result = await runReplyAgent(agentId, `${sessionId}-r${index + 1}`, prompt, thinking, settings.agentTimeoutSeconds);
     const rawText = extractRawPayloadText(result);
-    const text = sanitizeReplyText(rawText);
+    const parsed = parseStickerDirective(rawText);
+    const text = sanitizeReplyText(parsed.text);
     const suppressedUpstreamError = !!rawText && looksLikeUpstreamReplyErrorText(rawText);
     const suppressedReason = suppressedUpstreamError ? classifyUpstreamReplyError(rawText) : null;
     const meta = result?.result?.meta?.agentMeta || {};
-    lastResult = { text, rawText, meta, attempts: index + 1, suppressedUpstreamError, suppressedReason };
+    lastResult = { text, rawText, meta, attempts: index + 1, suppressedUpstreamError, suppressedReason, stickerEmotion: parsed.stickerEmotion };
     if (text || suppressedUpstreamError) return lastResult;
   }
-  return lastResult || { text: "", rawText: "", meta: {}, attempts: 0, suppressedUpstreamError: false, suppressedReason: null };
+  return lastResult || { text: "", rawText: "", meta: {}, attempts: 0, suppressedUpstreamError: false, suppressedReason: null, stickerEmotion: "" };
 }
 
 function normalizeConfirmText(raw = "") {
@@ -834,6 +961,8 @@ async function main() {
   const replyAgentId = resolveReplyAgentId(cfg);
   const scanFallbackAgentId = resolveScanFallbackAgentId(cfg);
   const monitorSettings = resolveMonitorSettings(cfg);
+  const stickerSettings = resolveStickerSettings(cfg);
+  const stickerPacks = await listStickerEmotionPacks(stickerSettings.rootPath);
   const groups = resolveGroups(cfg);
   const state = updateStateMeta(await loadJson(STATE_PATH, { groups: {} }), groups, monitorSettings);
   const selected = args.groupId ? groups.filter((item) => item.id === args.groupId) : groups;
@@ -844,6 +973,14 @@ async function main() {
   const summary = [];
   try {
     for (const group of selected) {
+      if (!group.enabled) {
+        summary.push({ groupId: group.id, skipped: "group_disabled" });
+        continue;
+      }
+      if (!group.replyEnabled && !args.force) {
+        summary.push({ groupId: group.id, skipped: "reply_disabled" });
+        continue;
+      }
       const history = await rpc.call("get_group_msg_history", { group_id: group.id });
       const items = normalize(history?.messages || []);
       const recent = items.filter((item) => item.time >= nowSec - monitorSettings.windowMinutes * 60);
@@ -1048,9 +1185,11 @@ async function main() {
       }
 
       const styleQuotes = await loadStyleQuotes();
-      const replyPrompt = buildReplyPrompt(group, transcript, signals, styleQuotes);
+      const stickerContext = buildStickerContext(group, stickerSettings, stickerPacks, prev);
+      const replyPrompt = buildReplyPrompt(group, transcript, signals, styleQuotes, stickerContext);
       const replyResult = await runReplyWithRetry(replyAgentId, `${replyAgentId}-${group.id}-${sessionKey}`, replyPrompt, monitorSettings);
       const replyText = replyResult?.text || "";
+      const requestedStickerEmotion = String(replyResult?.stickerEmotion || "").trim();
       const suppressedReplyError = Boolean(replyResult?.suppressedUpstreamError);
       const suppressedReason = String(replyResult?.suppressedReason || "");
       const replyMeta = {
@@ -1103,15 +1242,23 @@ async function main() {
         continue;
       }
 
+      const stickerPack = stickerContext.enabled ? selectStickerPack(stickerPacks, requestedStickerEmotion) : null;
+      const stickerSegment = stickerPack ? await stageStickerForNapCat(stickerSettings, stickerPack, sessionKey) : null;
+      const outboundMessage = stickerSegment ? `${replyText}\n${stickerSegment}` : replyText;
+
       if (!args.dryRun) {
-        await sendReply(rpc, group.id, replyText, selfId);
+        await sendReply(rpc, group.id, outboundMessage, selfId);
         state.groups[String(group.id)].lastDeliveredAt = new Date().toISOString();
         state.groups[String(group.id)].lastDeliveredText = replyText;
         state.groups[String(group.id)].lastRepliedHumanMessageKey = lastHumanKey || "";
+        state.groups[String(group.id)].lastStickerAt = stickerSegment ? state.groups[String(group.id)].lastDeliveredAt : (prev.lastStickerAt || null);
+        state.groups[String(group.id)].lastStickerEmotion = stickerPack ? stickerPack.emotion : "";
         state.groups[String(group.id)].lastReplyMeta = {
           ...(state.groups[String(group.id)].lastReplyMeta || {}),
           delivered: true,
           deliveredAt: state.groups[String(group.id)].lastDeliveredAt,
+          stickerEmotion: stickerPack ? stickerPack.emotion : null,
+          stickerAttached: Boolean(stickerSegment),
         };
         await saveJson(STATE_PATH, state);
       }
@@ -1121,6 +1268,7 @@ async function main() {
         dryRun: args.dryRun,
         signalScore: signals.score,
         deliveredText: replyText,
+        stickerEmotion: stickerPack ? stickerPack.emotion : null,
         decisionText,
         scanProvider: decisionMeta.provider || null,
         scanModel: decisionMeta.model || null,
