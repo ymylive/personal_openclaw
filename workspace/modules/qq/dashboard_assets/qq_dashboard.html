@@ -218,9 +218,31 @@
                   <input class="text-input" type="number" min="0" step="1" data-sticker-default-cooldown />
                 </label>
               </div>
+              <div class="sticker-upload-grid">
+                <label class="form-field">
+                  <span data-i18n="stickers.targetFolder">Target emotion folder</span>
+                  <select class="text-input" data-sticker-folder-select></select>
+                </label>
+                <label class="form-field">
+                  <span data-i18n="stickers.newFolder">Create emotion folder</span>
+                  <div class="inline-form">
+                    <input class="text-input" type="text" data-sticker-folder-new placeholder="happy" />
+                    <button class="btn btn--ghost" type="button" data-sticker-folder-create>
+                      <span data-i18n="stickers.createFolder">Create</span>
+                    </button>
+                  </div>
+                </label>
+              </div>
+              <label class="form-field">
+                <span data-i18n="stickers.uploadFiles">Upload sticker images</span>
+                <input class="text-input" type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp" multiple data-sticker-upload-files />
+              </label>
               <div class="editor-toolbar">
                 <button class="btn btn--subtle" type="button" data-sticker-refresh>
                   <span data-i18n="stickers.refresh">Refresh sticker scan</span>
+                </button>
+                <button class="btn btn--ghost" type="button" data-sticker-upload>
+                  <span data-i18n="stickers.upload">Upload images</span>
                 </button>
                 <button class="btn btn--ghost" type="button" data-config-reset>
                   <span data-i18n="config.reload">Reload config</span>
@@ -232,6 +254,7 @@
               <p class="panel__note" data-sticker-summary>
                 Loading sticker pack inventory.
               </p>
+              <p class="panel__note" data-sticker-upload-status></p>
               <div class="sticker-pack-list" data-sticker-packs>
                 <div class="empty-state">Sticker inventory will appear after scan.</div>
               </div>

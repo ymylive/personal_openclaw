@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import argparse
 import base64
+import cgi
 import json
+import os
 import re
 import socket
 import subprocess
@@ -35,6 +37,8 @@ API_BOOTSTRAP = "/qq/api/bootstrap"
 API_STATUS = "/qq/api/status"
 API_CONFIG = "/qq/api/config"
 API_STICKERS = "/qq/api/stickers"
+API_STICKER_FOLDERS = "/qq/api/stickers/folders"
+API_STICKER_UPLOAD = "/qq/api/stickers/upload"
 ASSET_PREFIX = "/qq/assets/"
 
 DEFAULT_CONFIG_CANDIDATES = (
@@ -118,6 +122,12 @@ def create_handler(config: QQDashboardConfig):
             if path == API_CONFIG:
                 self._handle_save_config()
                 return
+            if path == API_STICKER_FOLDERS:
+                self._handle_create_sticker_folder()
+                return
+            if path == API_STICKER_UPLOAD:
+                self._handle_upload_stickers()
+                return
             self._write_text(HTTPStatus.NOT_FOUND, "Not Found", "text/plain; charset=utf-8")
 
         def log_message(self, format, *args):
@@ -167,6 +177,88 @@ def create_handler(config: QQDashboardConfig):
                 },
             )
 
+        def _handle_create_sticker_folder(self):
+            try:
+                payload = self._read_json_body()
+            except ValueError as exc:
+                self._write_json(HTTPStatus.BAD_REQUEST, {"error": "INVALID_JSON", "message": str(exc)})
+                return
+
+            config_doc, _ = _load_primary_config_document(config.config_candidates)
+            qq_config = dict(((config_doc.get("channels") or {}).get("qq") or {}))
+            sticker_settings = _extract_sticker_settings(qq_config)
+            root_path = str(sticker_settings.get("rootPath") or "").strip()
+            folder_name = _sanitize_sticker_folder_name(payload.get("name"))
+            if not root_path:
+                self._write_json(HTTPStatus.BAD_REQUEST, {"error": "STICKER_ROOT_MISSING", "message": "Configure stickers.rootPath before creating folders."})
+                return
+            if not folder_name:
+                self._write_json(HTTPStatus.BAD_REQUEST, {"error": "INVALID_FOLDER_NAME", "message": "Provide a folder name using letters, numbers, spaces, hyphens, or underscores."})
+                return
+
+            created_path = ensure_sticker_folder(root_path=root_path, folder_name=folder_name)
+            if created_path is None:
+                self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "FOLDER_CREATE_FAILED", "message": "Could not create the sticker emotion directory."})
+                return
+
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "folder": folder_name,
+                    "path": str(created_path),
+                    "inventory": build_sticker_inventory_payload(config=config),
+                },
+            )
+
+        def _handle_upload_stickers(self):
+            config_doc, _ = _load_primary_config_document(config.config_candidates)
+            qq_config = dict(((config_doc.get("channels") or {}).get("qq") or {}))
+            sticker_settings = _extract_sticker_settings(qq_config)
+            root_path = str(sticker_settings.get("rootPath") or "").strip()
+            if not root_path:
+                self._write_json(HTTPStatus.BAD_REQUEST, {"error": "STICKER_ROOT_MISSING", "message": "Configure stickers.rootPath before uploading stickers."})
+                return
+
+            try:
+                form = self._read_multipart_form()
+            except ValueError as exc:
+                self._write_json(HTTPStatus.BAD_REQUEST, {"error": "INVALID_MULTIPART", "message": str(exc)})
+                return
+
+            folder_name = _sanitize_sticker_folder_name(_form_value(form, "emotion"))
+            if not folder_name:
+                self._write_json(HTTPStatus.BAD_REQUEST, {"error": "INVALID_FOLDER_NAME", "message": "Choose an existing emotion folder or create a new one first."})
+                return
+
+            folder_path = ensure_sticker_folder(root_path=root_path, folder_name=folder_name)
+            if folder_path is None:
+                self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "FOLDER_CREATE_FAILED", "message": "Could not prepare the target emotion directory."})
+                return
+
+            uploaded = save_uploaded_sticker_files(folder_path=folder_path, form=form)
+            if not uploaded["saved"]:
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "error": "NO_VALID_FILES",
+                        "message": "Upload one or more image files (.png, .jpg, .jpeg, .gif, .webp, .bmp).",
+                        "rejected": uploaded["rejected"],
+                    },
+                )
+                return
+
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "folder": folder_name,
+                    "saved": uploaded["saved"],
+                    "rejected": uploaded["rejected"],
+                    "inventory": build_sticker_inventory_payload(config=config),
+                },
+            )
+
         def _read_json_body(self):
             raw_length = self.headers.get("Content-Length") or "0"
             try:
@@ -183,6 +275,18 @@ def create_handler(config: QQDashboardConfig):
             if not isinstance(parsed, dict):
                 raise ValueError("Request JSON must be an object.")
             return parsed
+
+        def _read_multipart_form(self):
+            environ = {
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+                "CONTENT_LENGTH": self.headers.get("Content-Length", "0"),
+            }
+            try:
+                form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ=environ)
+            except Exception as exc:
+                raise ValueError("Request body must be multipart/form-data.") from exc
+            return form
 
         def _handle_asset(self, path: str):
             filename = path[len(ASSET_PREFIX) :].strip("/")
@@ -733,6 +837,92 @@ def _scan_sticker_inventory(*, root_path: str, enabled: bool) -> dict:
         "totalImages": total_images,
         "problems": [],
     }
+
+
+def ensure_sticker_folder(*, root_path: str, folder_name: str) -> Path | None:
+    clean_name = _sanitize_sticker_folder_name(folder_name)
+    clean_root = str(root_path or "").strip()
+    if not clean_name or not clean_root:
+        return None
+    root = Path(clean_root)
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        folder = _resolve_child_path(root, clean_name)
+        folder.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    return folder
+
+
+def save_uploaded_sticker_files(*, folder_path: Path, form) -> dict:
+    saved: list[str] = []
+    rejected: list[str] = []
+    fields = form["files"] if "files" in form else []
+    if not isinstance(fields, list):
+        fields = [fields]
+
+    for field in fields:
+        filename = os.path.basename(str(getattr(field, "filename", "") or ""))
+        if not filename:
+            continue
+        suffix = Path(filename).suffix.lower()
+        if suffix not in IMAGE_FILE_EXTENSIONS:
+            rejected.append(filename)
+            continue
+        body = field.file.read() if getattr(field, "file", None) else b""
+        if not body:
+            rejected.append(filename)
+            continue
+        target = _dedupe_filename(folder_path, filename)
+        try:
+            target.write_bytes(body)
+        except OSError:
+            rejected.append(filename)
+            continue
+        saved.append(target.name)
+
+    return {"saved": saved, "rejected": rejected}
+
+
+def _dedupe_filename(folder_path: Path, filename: str) -> Path:
+    candidate = _resolve_child_path(folder_path, filename)
+    if not candidate.exists():
+        return candidate
+    stem = candidate.stem
+    suffix = candidate.suffix
+    index = 2
+    while True:
+        next_candidate = _resolve_child_path(folder_path, f"{stem}-{index}{suffix}")
+        if not next_candidate.exists():
+            return next_candidate
+        index += 1
+
+
+def _sanitize_sticker_folder_name(value) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    cleaned = re.sub(r"[^0-9A-Za-z_\-\u4e00-\u9fff ]+", "", raw).strip().replace(" ", "-")
+    return cleaned[:64]
+
+
+def _resolve_child_path(root: Path, child: str) -> Path:
+    root_resolved = root.resolve()
+    candidate = (root_resolved / child).resolve()
+    try:
+        candidate.relative_to(root_resolved)
+    except ValueError:
+        return root_resolved / "__invalid__"
+    return candidate
+
+
+def _form_value(form, key: str) -> str:
+    if key not in form:
+        return ""
+    field = form[key]
+    if isinstance(field, list):
+        field = field[0]
+    return str(getattr(field, "value", "") or "")
 
 
 def _build_runtime_context(*, config: QQDashboardConfig, now: str | None, log_line_limit: int) -> dict:

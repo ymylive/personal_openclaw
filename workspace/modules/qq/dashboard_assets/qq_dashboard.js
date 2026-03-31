@@ -128,6 +128,14 @@
       "stickers.defaultIntensity": "默认贴图强度",
       "stickers.defaultCooldown": "默认冷却（秒）",
       "stickers.refresh": "刷新贴图扫描",
+      "stickers.targetFolder": "目标情绪目录",
+      "stickers.newFolder": "新建情绪目录",
+      "stickers.createFolder": "新建",
+      "stickers.uploadFiles": "上传表情包图片",
+      "stickers.upload": "上传图片",
+      "stickers.uploadSaved": "已上传 {count} 张图片。",
+      "stickers.uploadRejected": "被拒绝文件：{files}",
+      "stickers.folderCreated": "已创建情绪目录：{name}",
       "stickers.summary.empty": "尚未发现情绪目录。",
       "stickers.summary.ready": "已发现 {emotionCount} 个情绪目录，共 {totalImages} 张图片。",
       "stickers.problem.none": "未发现贴图扫描问题。",
@@ -266,6 +274,14 @@
       "stickers.defaultIntensity": "Default sticker intensity",
       "stickers.defaultCooldown": "Default cooldown (seconds)",
       "stickers.refresh": "Refresh sticker scan",
+      "stickers.targetFolder": "Target emotion folder",
+      "stickers.newFolder": "Create emotion folder",
+      "stickers.createFolder": "Create",
+      "stickers.uploadFiles": "Upload sticker images",
+      "stickers.upload": "Upload images",
+      "stickers.uploadSaved": "Uploaded {count} images.",
+      "stickers.uploadRejected": "Rejected files: {files}",
+      "stickers.folderCreated": "Created emotion folder: {name}",
       "stickers.summary.empty": "No emotion directories discovered yet.",
       "stickers.summary.ready": "Discovered {emotionCount} emotion directories with {totalImages} images.",
       "stickers.problem.none": "No sticker scan problems detected.",
@@ -300,7 +316,9 @@
     bootstrapUrl: body.dataset.bootstrapUrl || "/qq/api/bootstrap",
     statusUrl: body.dataset.statusUrl || "/qq/api/status",
     configUrl: "/qq/api/config",
-    stickersUrl: "/qq/api/stickers"
+    stickersUrl: "/qq/api/stickers",
+    stickerFoldersUrl: "/qq/api/stickers/folders",
+    stickerUploadUrl: "/qq/api/stickers/upload"
   };
 
   var elements = {
@@ -347,6 +365,12 @@
     stickerDefaultIntensityInput: q("[data-sticker-default-intensity]"),
     stickerDefaultCooldownInput: q("[data-sticker-default-cooldown]"),
     stickerRefreshButton: q("[data-sticker-refresh]"),
+    stickerFolderSelect: q("[data-sticker-folder-select]"),
+    stickerFolderNewInput: q("[data-sticker-folder-new]"),
+    stickerFolderCreateButton: q("[data-sticker-folder-create]"),
+    stickerUploadFilesInput: q("[data-sticker-upload-files]"),
+    stickerUploadButton: q("[data-sticker-upload]"),
+    stickerUploadStatus: q("[data-sticker-upload-status]"),
     stickerSummary: q("[data-sticker-summary]"),
     stickerPacks: q("[data-sticker-packs]"),
     stickerProblems: q("[data-sticker-problems]"),
@@ -383,6 +407,8 @@
       elements.groupRows.addEventListener("change", handleGroupRowsInput);
     }
     if (elements.stickerRefreshButton) elements.stickerRefreshButton.addEventListener("click", handleStickerRefresh);
+    if (elements.stickerFolderCreateButton) elements.stickerFolderCreateButton.addEventListener("click", handleStickerFolderCreate);
+    if (elements.stickerUploadButton) elements.stickerUploadButton.addEventListener("click", handleStickerUpload);
     if (elements.configSaveButton) elements.configSaveButton.addEventListener("click", handleConfigSave);
     if (elements.configResetButton) elements.configResetButton.addEventListener("click", handleConfigReload);
     bindStickerInputs();
@@ -639,6 +665,7 @@
       elements.stickerPacks.appendChild(node);
     });
     setStickerProblems(payload.problems && payload.problems.length ? payload.problems.join("\n") : t("stickers.problem.none"), Boolean(payload.problems && payload.problems.length));
+    populateStickerFolderOptions(payload.emotions || []);
   }
 
   function bindStickerInputs() {
@@ -702,6 +729,67 @@
   async function handleStickerRefresh() {
     appState.stickersDraft = collectStickerDraft();
     await loadStickerInventory({ softFail: false });
+  }
+
+  async function handleStickerFolderCreate() {
+    var name = elements.stickerFolderNewInput ? String(elements.stickerFolderNewInput.value || "").trim() : "";
+    if (!name) {
+      setStickerUploadStatus(t("stickers.newFolder") + ": " + t("login.empty"), true);
+      return;
+    }
+    try {
+      var result = await fetchJson(config.stickerFoldersUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name })
+      });
+      if (elements.stickerFolderNewInput) elements.stickerFolderNewInput.value = "";
+      appState.stickersPayload = result.inventory || null;
+      if (appState.stickersPayload) {
+        renderStickerInventory(appState.stickersPayload);
+        selectStickerFolder(result.folder);
+      }
+      setStickerUploadStatus(t("stickers.folderCreated", { name: result.folder }), false);
+    } catch (error) {
+      setStickerUploadStatus(errorMessage(error), true);
+    }
+  }
+
+  async function handleStickerUpload() {
+    var filesInput = elements.stickerUploadFilesInput;
+    var folder = selectedStickerFolder();
+    if (!filesInput || !filesInput.files || !filesInput.files.length) {
+      setStickerUploadStatus(t("stickers.uploadFiles") + ": 0", true);
+      return;
+    }
+    if (!folder) {
+      setStickerUploadStatus(t("stickers.targetFolder") + " required", true);
+      return;
+    }
+    var form = new FormData();
+    form.append("emotion", folder);
+    Array.prototype.forEach.call(filesInput.files, function (file) {
+      form.append("files", file, file.name);
+    });
+    try {
+      var result = await fetchJson(config.stickerUploadUrl, {
+        method: "POST",
+        body: form
+      });
+      filesInput.value = "";
+      appState.stickersPayload = result.inventory || null;
+      if (appState.stickersPayload) {
+        renderStickerInventory(appState.stickersPayload);
+        selectStickerFolder(folder);
+      }
+      var message = t("stickers.uploadSaved", { count: (result.saved || []).length });
+      if (result.rejected && result.rejected.length) {
+        message += " " + t("stickers.uploadRejected", { files: result.rejected.join(", ") });
+      }
+      setStickerUploadStatus(message, false);
+    } catch (error) {
+      setStickerUploadStatus(errorMessage(error), true);
+    }
   }
 
   async function handleConfigReload() {
@@ -789,6 +877,52 @@
     if (!elements.stickerProblems) return;
     elements.stickerProblems.classList.toggle("is-error", Boolean(isError));
     text(elements.stickerProblems, message || "");
+  }
+
+  function setStickerUploadStatus(message, isError) {
+    if (!elements.stickerUploadStatus) return;
+    elements.stickerUploadStatus.classList.toggle("is-error", Boolean(isError));
+    text(elements.stickerUploadStatus, message || "");
+  }
+
+  function populateStickerFolderOptions(emotions) {
+    if (!elements.stickerFolderSelect) return;
+    var previous = elements.stickerFolderSelect.value;
+    elements.stickerFolderSelect.innerHTML = "";
+    (emotions || []).forEach(function (item) {
+      var option = document.createElement("option");
+      option.value = item.emotion;
+      option.textContent = item.emotion + " (" + String(item.imageCount || 0) + ")";
+      elements.stickerFolderSelect.appendChild(option);
+    });
+    if (previous) {
+      selectStickerFolder(previous);
+    }
+  }
+
+  function selectStickerFolder(folder) {
+    if (!elements.stickerFolderSelect) return;
+    var options = Array.prototype.slice.call(elements.stickerFolderSelect.options || []);
+    var matched = options.some(function (option) {
+      if (option.value === folder) {
+        elements.stickerFolderSelect.value = folder;
+        return true;
+      }
+      return false;
+    });
+    if (!matched && options.length) {
+      elements.stickerFolderSelect.value = options[0].value;
+    }
+  }
+
+  function selectedStickerFolder() {
+    return elements.stickerFolderSelect ? String(elements.stickerFolderSelect.value || "").trim() : "";
+  }
+
+  function errorMessage(error) {
+    if (error && error.payload && error.payload.message) return String(error.payload.message);
+    if (error && error.message) return String(error.message);
+    return "Request failed";
   }
 
   function formatValidationErrors(details) {

@@ -38,6 +38,10 @@ class QQDashboardServerTest(unittest.TestCase):
         self.assertIn("data-config-save", html)
         self.assertIn("data-sticker-root", html)
         self.assertIn("data-sticker-packs", html)
+        self.assertIn("data-sticker-folder-select", html)
+        self.assertIn("data-sticker-folder-create", html)
+        self.assertIn("data-sticker-upload-files", html)
+        self.assertIn("data-sticker-upload", html)
         self.assertIn("var TRANSLATIONS =", js)
         self.assertIn('"zh-CN"', js)
         self.assertIn('"en"', js)
@@ -45,6 +49,8 @@ class QQDashboardServerTest(unittest.TestCase):
         self.assertIn("renderConfigEditors", js)
         self.assertIn("handleConfigSave", js)
         self.assertIn("loadStickerInventory", js)
+        self.assertIn("handleStickerUpload", js)
+        self.assertIn("handleStickerFolderCreate", js)
 
     def test_bootstrap_payload_stays_qq_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -615,6 +621,117 @@ class QQDashboardServerTest(unittest.TestCase):
         self.assertEqual(emotions["happy"], 2)
         self.assertEqual(emotions["calm"], 1)
         self.assertEqual(payload["problems"], [])
+
+    def test_sticker_folder_api_creates_new_emotion_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "openclaw.json"
+            asset_dir = root / "assets"
+            sticker_root = root / "stickers"
+            asset_dir.mkdir()
+            config_path.write_text(
+                json.dumps({"channels": {"qq": {"stickerPacks": {"enabled": True, "rootPath": str(sticker_root)}}}}),
+                encoding="utf-8",
+            )
+
+            server = ThreadingHTTPServer(
+                ("127.0.0.1", 0),
+                create_handler(
+                    QQDashboardConfig(
+                        asset_dir=asset_dir,
+                        config_candidates=(config_path,),
+                        state_dir=root / "state",
+                        legacy_state_path=root / "legacy.json",
+                        log_dir=root / "logs",
+                    )
+                ),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.server_address[1]
+            try:
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/qq/api/stickers/folders",
+                    data=json.dumps({"name": "happy"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                payload = json.loads(urllib.request.urlopen(request).read().decode("utf-8"))
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["folder"], "happy")
+            self.assertTrue(Path(payload["path"]).is_dir())
+
+    def test_sticker_upload_api_saves_multiple_images_and_dedupes_names(self) -> None:
+        boundary = "----OpenClawFormBoundary"
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="emotion"\r\n\r\n'
+            "happy\r\n"
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="files"; filename="wave.png"\r\n'
+            "Content-Type: image/png\r\n\r\n"
+            "png-one\r\n"
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="files"; filename="wave.png"\r\n'
+            "Content-Type: image/png\r\n\r\n"
+            "png-two\r\n"
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="files"; filename="notes.txt"\r\n'
+            "Content-Type: text/plain\r\n\r\n"
+            "not-image\r\n"
+            f"--{boundary}--\r\n"
+        ).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "openclaw.json"
+            asset_dir = root / "assets"
+            sticker_root = root / "stickers"
+            (sticker_root / "happy").mkdir(parents=True)
+            asset_dir.mkdir()
+            config_path.write_text(
+                json.dumps({"channels": {"qq": {"stickerPacks": {"enabled": True, "rootPath": str(sticker_root)}}}}),
+                encoding="utf-8",
+            )
+
+            server = ThreadingHTTPServer(
+                ("127.0.0.1", 0),
+                create_handler(
+                    QQDashboardConfig(
+                        asset_dir=asset_dir,
+                        config_candidates=(config_path,),
+                        state_dir=root / "state",
+                        legacy_state_path=root / "legacy.json",
+                        log_dir=root / "logs",
+                    )
+                ),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.server_address[1]
+            try:
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/qq/api/stickers/upload",
+                    data=body,
+                    headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                    method="POST",
+                )
+                payload = json.loads(urllib.request.urlopen(request).read().decode("utf-8"))
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+            self.assertTrue(payload["ok"])
+            self.assertEqual(sorted(payload["saved"]), ["wave-2.png", "wave.png"])
+            self.assertEqual(payload["rejected"], ["notes.txt"])
+            saved_names = sorted(path.name for path in (Path(payload["inventory"]["rootPath"]) / "happy").iterdir())
+            self.assertEqual(saved_names, ["wave-2.png", "wave.png"])
 
     def test_server_routes_serve_shell_status_and_assets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
