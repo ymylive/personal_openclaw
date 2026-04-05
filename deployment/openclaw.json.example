@@ -570,7 +570,6 @@
   },
   "plugins": {
     "allow": [
-      "qq",
       "telegram",
       "memory-core"
     ],
@@ -578,20 +577,8 @@
       "telegram": {
         "enabled": true
       },
-      "qq": {
-        "enabled": true
-      },
       "memory-core": {
         "enabled": true
-      }
-    },
-    "installs": {
-      "qq": {
-        "source": "npm",
-        "spec": "github:constansino/openclaw_qq",
-        "installPath": "/root/.openclaw/extensions/qq",
-        "version": "1.0.0",
-        "installedAt": "2026-03-08T01:41:31.808Z"
       }
     },
     "slots": {

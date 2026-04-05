@@ -10,6 +10,10 @@ title: "Dashboard"
 The Gateway dashboard is the browser Control UI served at `/` by default
 (override with `gateway.controlUi.basePath`).
 
+The finance dashboard remains available at `/finance`.
+It is finance-only and separate from any co-hosted VCP AdminPanel or NapCat
+surfaces, which should be exposed independently.
+
 Quick open (local Gateway):
 
 - [http://127.0.0.1:18789/](http://127.0.0.1:18789/) (or [http://localhost:18789/](http://localhost:18789/))
@@ -19,7 +23,6 @@ Key references:
 - [Control UI](/web/control-ui) for usage and UI capabilities.
 - [Tailscale](/gateway/tailscale) for Serve/Funnel automation.
 - [Web surfaces](/web) for bind modes and security notes.
-- [QQ Dashboard](/web/qq-dashboard) for QQ-specific telemetry and node health.
 
 Authentication is enforced at the WebSocket handshake via `connect.params.auth`
 (token or password). See `gateway.auth` in [Gateway configuration](/gateway/configuration).
@@ -27,10 +30,6 @@ Authentication is enforced at the WebSocket handshake via `connect.params.auth`
 Security note: the Control UI is an **admin surface** (chat, config, exec approvals).
 Do not expose it publicly. The UI stores the token in `localStorage` after first load.
 Prefer localhost, Tailscale Serve, or an SSH tunnel.
-
-## Separated frontends
-
-In separated-frontends deployments the Control UI stays at `/`, while the finance dashboard is folded into `/finance/` and the QQ dashboard occupies `/qq/`. The finance service listens on `127.0.0.1:18892` in the example proxy and the documentation on `/finance/` is finance-only; keep finance push history off of the `/qq/` surface and treat `/finance/` as the truth for reporting. The sample config in `deployment/nginx/openclaw-separated-frontends.conf.example` keeps `/finance/` and `/qq/` off the public Control UI domain and pairs with the QQ service in `deployment/systemd/openclaw-qq-dashboard.service.example`.
 
 ## Fast path (recommended)
 
