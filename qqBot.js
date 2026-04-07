@@ -62,6 +62,62 @@ class QQBot {
         console.log(`[QQBot] Starting... WS: ${this.wsUrl}, Agent: ${this.agentName}`);
         console.log(`[QQBot] Allowed groups: ${this.allowedGroups.join(', ') || 'ALL'}`);
         this._connect();
+        this._watchDreamLogs();
+    }
+
+    /**
+     * 监听梦日志目录，有新的梦感悟时私发给管理员
+     */
+    _watchDreamLogs() {
+        const dreamLogDir = path.join(__dirname, 'Plugin', 'AgentDream', 'dream_logs');
+        try {
+            fs.mkdirSync(dreamLogDir, { recursive: true });
+        } catch (e) { /* already exists */ }
+
+        const seen = new Set();
+        // 标记已有文件避免重复发
+        try {
+            fs.readdirSync(dreamLogDir).forEach(f => seen.add(f));
+        } catch (e) { /* empty */ }
+
+        fs.watch(dreamLogDir, (eventType, filename) => {
+            if (!filename || !filename.endsWith('.json') || seen.has(filename)) return;
+            seen.add(filename);
+
+            // 延迟1秒等文件写完
+            setTimeout(async () => {
+                try {
+                    const content = JSON.parse(fs.readFileSync(path.join(dreamLogDir, filename), 'utf-8'));
+                    const narrative = content.dreamNarrative || '';
+                    const agent = content.agentName || '未知';
+                    if (!narrative) return;
+
+                    const header = `[梦境感悟] ${agent}的梦\n\n`;
+                    const fullText = header + narrative;
+
+                    // QQ 单条消息约4500字上限，超长分段发送
+                    const maxLen = 4000;
+                    const parts = [];
+                    for (let i = 0; i < fullText.length; i += maxLen) {
+                        parts.push(fullText.substring(i, i + maxLen));
+                    }
+
+                    // 私发给所有管理员
+                    for (const adminId of this.adminUsers) {
+                        for (let i = 0; i < parts.length; i++) {
+                            this._sendPrivateMsg(adminId, parts[i]);
+                            if (i < parts.length - 1) {
+                                await new Promise(r => setTimeout(r, 500));
+                            }
+                        }
+                    }
+                    console.log(`[QQBot] Dream notification sent to admins: ${filename}`);
+                } catch (e) {
+                    console.warn(`[QQBot] Failed to read dream log ${filename}: ${e.message}`);
+                }
+            }, 1500);
+        });
+        console.log(`[QQBot] Watching dream logs: ${dreamLogDir}`);
     }
 
     _connect() {
