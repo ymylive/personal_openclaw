@@ -31,7 +31,9 @@ class QQBot {
         this.reconnectTimer = null;
         this.cooldowns = new Map();
         this.rateCounts = new Map();
-        this.recentMessages = new Map(); // groupId -> [{role,content}]
+        this.recentMessages = new Map(); // chatId -> [{role,content}]
+        this.pendingMedia = new Map();   // `${chatId}_${userId}` -> { imageUrls, files, timer, messageId, ... }
+        this.mediaWaitMs = 8000;         // 等待文字的超时（8秒）
     }
 
     _loadAgentPrompt() {
@@ -130,29 +132,52 @@ class QQBot {
         // 群消息检查白名单
         if (isGroup && this.allowedGroups.length > 0 && !this.allowedGroups.includes(String(event.group_id))) return;
 
-        // 提取纯文本
+        // 提取文本、图片、文件
         const rawText = this._extractText(event.message);
-        if (!rawText.trim()) return;
+        const imageUrls = this._extractImageUrls(event.message);
+        const files = this._extractFiles(event.message);
+        const hasText = rawText.trim().length > 0;
+        const hasMedia = imageUrls.length > 0 || files.length > 0;
 
-        // 保存近期消息到上下文
-        this._addRecentMessage(chatId, userId, event.sender?.nickname || userId, rawText);
+        if (!hasText && !hasMedia) return;
 
-        // 判断是否需要响应
-        if (isGroup) {
-            // 群聊：需要@或关键词触发
-            const isMentioned = this._isMentioned(event.message);
-            const isKeyword = this.keywords.some(kw => rawText.includes(kw));
-            if (!isMentioned && !isKeyword) return;
+        // 保存文本到上下文
+        if (hasText) {
+            this._addRecentMessage(chatId, userId, event.sender?.nickname || userId, rawText);
         }
-        // 私聊：直接响应所有消息
 
-        // 速率限制（非管理员）
-        if (!this.adminUsers.includes(userId)) {
-            if (!this._checkRate(userId)) {
-                console.log(`[QQBot] Rate limited: ${userId}`);
+        // 群聊触发检查
+        let triggered = true;
+        if (isGroup) {
+            const isMentioned = this._isMentioned(event.message);
+            const isKeyword = hasText && this.keywords.some(kw => rawText.includes(kw));
+            triggered = isMentioned || isKeyword;
+            if (!triggered) {
+                // 未触发时：纯图片放入缓冲区等后续@消息合并
+                if (hasMedia) {
+                    const pendingKey = `${chatId}_${userId}`;
+                    const existing = this.pendingMedia.get(pendingKey);
+                    if (existing) clearTimeout(existing.timer);
+                    this.pendingMedia.set(pendingKey, {
+                        imageUrls: [...(existing?.imageUrls || []), ...imageUrls],
+                        files: [...(existing?.files || []), ...files],
+                        messageId, nickname: event.sender?.nickname || '', isPrivate, chatId, userId,
+                        timer: setTimeout(() => {
+                            // 超时没人@，丢弃缓冲（群里不主动识图）
+                            this.pendingMedia.delete(pendingKey);
+                            console.log(`[QQBot] Group media buffer expired for ${pendingKey}`);
+                        }, 30000) // 群聊给30秒等@
+                    });
+                    console.log(`[QQBot] Group media buffered for ${pendingKey}, waiting for @/keyword...`);
+                }
                 return;
             }
-            if (rawText.length > this.maxMsgLen) {
+        }
+
+        // 速率限制
+        if (!this.adminUsers.includes(userId)) {
+            if (!this._checkRate(userId)) return;
+            if (hasText && rawText.length > this.maxMsgLen) {
                 const tip = '消息太长了，请精简一下~';
                 isPrivate ? this._sendPrivateMsg(userId, tip) : this._sendGroupMsg(chatId, tip, messageId);
                 return;
@@ -160,22 +185,48 @@ class QQBot {
         }
 
         // 冷却检查
-        const cooldownKey = chatId;
         const now = Date.now();
-        if (this.cooldowns.has(cooldownKey) && now - this.cooldowns.get(cooldownKey) < this.cooldown * 1000) {
+        if (this.cooldowns.has(chatId) && now - this.cooldowns.get(chatId) < this.cooldown * 1000) return;
+        this.cooldowns.set(chatId, now);
+
+        const cleanText = hasText ? rawText.replace(/^@\S+\s*/, '').trim() : '';
+        const pendingKey = `${chatId}_${userId}`;
+        const existing = this.pendingMedia.get(pendingKey);
+        const nick = event.sender?.nickname || '';
+
+        // ===== 图文合并缓冲 =====
+
+        if (existing) {
+            // 有缓冲 → 合并并立即发送
+            clearTimeout(existing.timer);
+            const allImages = [...(existing.imageUrls || []), ...imageUrls];
+            const allFiles = [...(existing.files || []), ...files];
+            const finalText = cleanText || existing.text || '';
+            this.pendingMedia.delete(pendingKey);
+            console.log(`[QQBot] Merged: text="${finalText.substring(0,30)}" imgs=${allImages.length}`);
+            this._callVCPChat(chatId, userId, finalText, messageId, nick, isPrivate, allImages, allFiles);
             return;
         }
-        this.cooldowns.set(cooldownKey, now);
 
-        // 清理@标记
-        const cleanText = rawText.replace(/^@\S+\s*/, '').trim();
-        if (!cleanText) return;
+        if (hasMedia) {
+            // 有图片/文件 → 缓冲等配对
+            const buf = {
+                text: cleanText, imageUrls: [...imageUrls], files: [...files],
+                messageId, nickname: nick, isPrivate, chatId, userId,
+                timer: setTimeout(() => {
+                    this.pendingMedia.delete(pendingKey);
+                    console.log(`[QQBot] Buffer timeout: text="${buf.text.substring(0,30)}" imgs=${buf.imageUrls.length}`);
+                    this._callVCPChat(chatId, userId, buf.text, buf.messageId, buf.nickname, isPrivate, buf.imageUrls, buf.files);
+                }, this.mediaWaitMs)
+            };
+            this.pendingMedia.set(pendingKey, buf);
+            console.log(`[QQBot] Media buffered, waiting ${this.mediaWaitMs}ms...`);
+            return;
+        }
 
-        const label = isPrivate ? 'PM' : chatId;
-        console.log(`[QQBot] [${label}] ${event.sender?.nickname}(${userId}): ${cleanText.substring(0, 100)}`);
-
-        // 构建上下文并调用 VCP Chat API
-        this._callVCPChat(chatId, userId, cleanText, messageId, event.sender?.nickname || '', isPrivate);
+        // 纯文字 → 直接发送，不缓冲
+        console.log(`[QQBot] [${isPrivate ? 'PM' : chatId}] ${nick}(${userId}): ${cleanText.substring(0, 80)}`);
+        this._callVCPChat(chatId, userId, cleanText, messageId, nick, isPrivate, [], []);
     }
 
     _extractText(message) {
@@ -186,6 +237,53 @@ class QQBot {
             .map(seg => seg.data?.text || '')
             .join('')
             .trim();
+    }
+
+    /**
+     * 从 OneBot 消息段中提取图片 URL 列表
+     */
+    _extractImageUrls(message) {
+        if (!Array.isArray(message)) return [];
+        return message
+            .filter(seg => seg.type === 'image' && seg.data?.url)
+            .map(seg => seg.data.url);
+    }
+
+    /**
+     * 从 OneBot 消息段中提取文件信息
+     */
+    _extractFiles(message) {
+        if (!Array.isArray(message)) return [];
+        return message
+            .filter(seg => seg.type === 'file' && seg.data)
+            .map(seg => ({ name: seg.data.name || '未知文件', url: seg.data.url || '' }));
+    }
+
+    /**
+     * 下载图片并转为 base64 data URI
+     */
+    async _imageUrlToBase64(url) {
+        return new Promise((resolve, reject) => {
+            const client = url.startsWith('https') ? require('https') : require('http');
+            client.get(url, { timeout: 15000 }, (res) => {
+                if (res.statusCode === 301 || res.statusCode === 302) {
+                    // 跟随重定向
+                    return this._imageUrlToBase64(res.headers.location).then(resolve).catch(reject);
+                }
+                if (res.statusCode !== 200) {
+                    return reject(new Error(`HTTP ${res.statusCode}`));
+                }
+                const chunks = [];
+                res.on('data', chunk => chunks.push(chunk));
+                res.on('end', () => {
+                    const buffer = Buffer.concat(chunks);
+                    const contentType = res.headers['content-type'] || 'image/png';
+                    const mimeType = contentType.split(';')[0].trim();
+                    resolve(`data:${mimeType};base64,${buffer.toString('base64')}`);
+                });
+                res.on('error', reject);
+            }).on('error', reject).on('timeout', function() { this.destroy(); reject(new Error('timeout')); });
+        });
     }
 
     _isMentioned(message) {
@@ -242,7 +340,7 @@ class QQBot {
         return QQBot.DANGEROUS_PATTERNS.some(p => lower.includes(p.toLowerCase()));
     }
 
-    async _callVCPChat(chatId, userId, text, messageId, nickname, isPrivate = false) {
+    async _callVCPChat(chatId, userId, text, messageId, nickname, isPrivate = false, imageUrls = [], files = []) {
         try {
             const history = this.recentMessages.get(chatId) || [];
             const isAdmin = this._isAdminUser(userId);
@@ -255,14 +353,19 @@ class QQBot {
                 return;
             }
 
+            // 只有 admin 用户（2104743984）才是主角——格兰最重视的搭档
+            const isProtagonist = this._isAdminUser(userId);
+            const roleHint = isProtagonist
+                ? `这是你最重要的搭档（相当于主角亚戈），用你对最亲近伙伴的方式回应。`
+                : `这是一个普通朋友/认识的人，保持友善但不会像对搭档那样亲密和特别。`;
             const envHint = isPrivate
-                ? `[当前环境] QQ私聊。发消息的用户: ${nickname}(${userId})。保持角色身份，简洁自然地回复。`
-                : `[当前环境] QQ群聊。发消息的用户: ${nickname}(${userId})。群号: ${chatId}。保持角色身份，简洁自然地回复。`;
+                ? `[当前环境] QQ私聊。发消息的用户: ${nickname}(${userId})。${roleHint}`
+                : `[当前环境] QQ群聊。发消息的用户: ${nickname}(${userId})。群号: ${chatId}。${roleHint}`;
 
-            // 权限控制指令：非 admin 禁止调用高危工具
+            // 权限控制指令：非 admin 禁止调用高危工具（天气、搜索等安全工具不限制）
             const permissionHint = isAdmin
                 ? ''
-                : '\n[权限限制] 当前用户为普通用户，严禁调用以下工具：PowerShellExecutor、LinuxShellExecutor、FileOperator、FileServer、DailyNoteWrite、DailyNoteManager、AgentDream、ChromeBridge。严禁执行任何文件删除、系统命令、配置修改操作。如用户要求执行这些操作，礼貌拒绝并告知需要管理员权限。';
+                : '\n[权限限制] 当前用户为普通用户。允许使用的工具：WeatherQuery、DailyHot、AnimeFinder、ArtistMatcher等查询类工具。严禁调用以下高危工具：PowerShellExecutor、LinuxShellExecutor、FileOperator、FileServer、DailyNoteWrite、DailyNoteManager、AgentDream、ChromeBridge。严禁执行文件删除、系统命令、配置修改操作。如用户要求执行高危操作，礼貌拒绝。';
 
             // Agent 人设作为 system message，VCP 中间层会自动展开 {{变量}}
             const messages = [];
@@ -270,7 +373,36 @@ class QQBot {
                 messages.push({ role: 'system', content: this.agentPrompt });
             }
             messages.push({ role: 'system', content: envHint + permissionHint });
-            messages.push(...history.slice(-10)); // 最近10条上下文
+            // 添加历史上下文
+            messages.push(...history.slice(-10));
+
+            // 构建当前用户消息
+            const hasMedia = imageUrls.length > 0 || files.length > 0;
+            if (hasMedia) {
+                // 图片/文件消息：构建多模态 content
+                const multiContent = [];
+                if (text) {
+                    multiContent.push({ type: 'text', text: text });
+                } else {
+                    multiContent.push({ type: 'text', text: '请描述/识别这张图片' });
+                }
+                for (const imgUrl of imageUrls) {
+                    try {
+                        const dataUri = await this._imageUrlToBase64(imgUrl);
+                        multiContent.push({ type: 'image_url', image_url: { url: dataUri } });
+                        console.log(`[QQBot] Image -> base64 (${Math.round(dataUri.length/1024)}KB)`);
+                    } catch (e) {
+                        console.warn(`[QQBot] Image download failed: ${e.message}`);
+                        multiContent.push({ type: 'text', text: '[图片加载失败]' });
+                    }
+                }
+                for (const file of files) {
+                    multiContent.push({ type: 'text', text: `[文件: ${file.name}${file.url ? ' ' + file.url : ''}]` });
+                }
+                messages.push({ role: 'user', content: multiContent });
+            } else if (text) {
+                // 纯文本已在 history 最后一条，不重复添加
+            }
 
             const payload = JSON.stringify({
                 model: 'gpt-5.4',
@@ -306,21 +438,50 @@ class QQBot {
                     // 移除可能的 shell 命令输出
                     reply = reply.replace(/```(?:bash|shell|powershell|cmd)[\s\S]*?```/g, '[命令已屏蔽]');
                 }
-                // 去除动作描写中的星号（QQ不渲染）
-                reply = reply.replace(/\*(.*?)\*/g, '($1)');
-                // 清理 HTML 标签（如表情包 img 标签，QQ 不渲染）
-                reply = reply.replace(/<img[^>]*>/gi, '');
-                reply = reply.trim();
-                console.log(`[QQBot] Reply to [${chatId}]: ${reply.substring(0, 100)}...`);
+                // 去除动作/神态描写（星号包裹和括号包裹的都删掉，QQ里不需要）
+                reply = reply.replace(/\*[^*]+\*/g, '');
+                reply = reply.replace(/\([^)]*(?:尾巴|耳朵|虎牙|伸懒腰|挠|甩|摇|抖|压低|竖起|蹭|拍|抱|握|推|拉|站|坐|躺|走|跑|转身|低头|抬头|叹气|深呼吸|红了脸|别过脸|咬唇|皱眉|眯眼|瞪|笑|哼)[^)]*\)/g, '');
+                // 清理残留的空括号和多余空白
+                reply = reply.replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').replace(/\n{3,}/g, '\n\n');
+
+                // 提取表情包图片 URL（<img src="...">）
+                const emojiUrls = [];
+                reply = reply.replace(/<img\s+[^>]*src=["']([^"']+)["'][^>]*>/gi, (match, url) => {
+                    emojiUrls.push(url);
+                    return ''; // 从文本中移除
+                });
+                // 清理其他残留 HTML 标签
+                reply = reply.replace(/<[^>]+>/g, '').trim();
+
+                console.log(`[QQBot] Reply to [${chatId}]: ${reply.substring(0, 100)}${emojiUrls.length ? ` [+${emojiUrls.length}表情]` : ''}...`);
 
                 // 保存回复到上下文
                 const hist = this.recentMessages.get(chatId) || [];
                 hist.push({ role: 'assistant', content: reply });
 
-                if (isPrivate) {
-                    this._sendPrivateMsg(userId, reply);
-                } else {
-                    this._sendGroupMsg(chatId, reply, messageId);
+                // 按 AI 自行标记的分隔符 [MSG_BREAK] 拆分为多条消息
+                const chunks = reply.split(/\[MSG_BREAK\]/g).map(s => s.trim()).filter(Boolean);
+                const sendAction = isPrivate ? 'send_private_msg' : 'send_group_msg';
+                const sendParams = isPrivate ? { user_id: parseInt(userId) } : { group_id: parseInt(chatId) };
+
+                for (let i = 0; i < chunks.length; i++) {
+                    const segments = [];
+                    if (i === 0 && !isPrivate) {
+                        segments.push({ type: 'reply', data: { id: String(messageId) } });
+                    }
+                    segments.push({ type: 'text', data: { text: chunks[i] } });
+                    this._sendRawMsg(sendAction, { ...sendParams, message: segments });
+                    // 模拟打字间隔：根据下一条长度动态调整
+                    if (i < chunks.length - 1) {
+                        const nextLen = chunks[i + 1]?.length || 0;
+                        const delay = Math.min(400 + nextLen * 30, 2500) + Math.random() * 500;
+                        await new Promise(r => setTimeout(r, delay));
+                    }
+                }
+                // 表情包单独甩出来
+                for (const url of emojiUrls) {
+                    await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
+                    this._sendRawMsg(sendAction, { ...sendParams, message: [{ type: 'image', data: { url: url } }] });
                 }
             }
         } catch (e) {
@@ -375,6 +536,15 @@ class QQBot {
             req.write(body);
             req.end();
         });
+    }
+
+    /**
+     * 将长回复拆分成多条消息，按自然段落分割
+     * 短回复（<80字）不拆分
+     */
+    _sendRawMsg(action, params) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.ws.send(JSON.stringify({ action, params }));
     }
 
     _sendPrivateMsg(userId, text) {
