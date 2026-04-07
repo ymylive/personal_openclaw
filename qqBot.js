@@ -513,11 +513,14 @@ class QQBot {
             reply = reply.trim();
 
             if (reply) {
-                // 非 admin 用户：过滤回复中可能泄露的工具调用
+                // 清理所有工具调用残留（VCPLoop 处理后可能残留在流式输出中）
+                reply = reply.replace(/<<<\[TOOL_REQUEST\]>>>[\s\S]*?<<<\[END_TOOL_REQUEST\]>>>/g, '');
+                // 清理不完整的工具调用片段（流式拼接可能截断）
+                reply = reply.replace(/<<<\[TOOL_REQUEST\]>>>[\s\S]*/g, '');
+                // 清理「始」「末」格式的参数残留
+                reply = reply.replace(/(?:maid|tool_name|tool_password|query|engines|max_results|language):「始」[^「]*「末」[,\s]*/g, '');
+                // 非 admin 用户额外过滤
                 if (!isAdmin) {
-                    // 移除 TOOL_REQUEST 块
-                    reply = reply.replace(/<<<\[TOOL_REQUEST\]>>>[\s\S]*?<<<\[END_TOOL_REQUEST\]>>>/g, '[工具调用已被权限系统拦截]');
-                    // 移除可能的 shell 命令输出
                     reply = reply.replace(/```(?:bash|shell|powershell|cmd)[\s\S]*?```/g, '[命令已屏蔽]');
                 }
                 // 去除动作/神态描写（星号包裹和括号包裹的都删掉，QQ里不需要）
