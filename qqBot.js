@@ -448,9 +448,8 @@ class QQBot {
             if (this.agentPrompt) {
                 messages.push({ role: 'system', content: this.agentPrompt });
             }
-            // 工具密码（VCPToolCode 验证必需）
-            if (!this.toolPassword) this.toolPassword = await this._loadToolPassword();
-            const currentToolPwd = this.toolPassword;
+            // 工具密码（VCPToolCode 验证必需，每次实时读取因为密码会动态刷新）
+            const currentToolPwd = await this._loadToolPassword();
             const toolPasswordHint = currentToolPwd
                 ? `\n[工具验证密码] 调用任何工具时，必须在 TOOL_REQUEST 中包含 tool_password:「始」${currentToolPwd}「末」 字段，否则工具调用会被拒绝。`
                 : '';
