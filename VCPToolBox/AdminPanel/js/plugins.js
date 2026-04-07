@@ -9,18 +9,22 @@ let originalPluginConfigs = {}; // Store original parsed entries for each plugin
  * 加载插件列表并填充侧边栏导航。
  */
 export async function loadPluginList() {
-    const pluginNavList = document.getElementById('plugin-nav')?.querySelector('ul');
+    // 优先使用插件分组内的 ul，回退到旧结构
+    const pluginsGroup = document.querySelector('.nav-group[data-group="plugins-management"]');
+    const pluginNavContainer = pluginsGroup
+        ? pluginsGroup.querySelector('.nav-group-items')
+        : document.getElementById('plugin-nav')?.querySelector('ul');
     const configDetailsContainer = document.getElementById('config-details-container');
-    if (!pluginNavList || !configDetailsContainer) return;
+    if (!pluginNavContainer || !configDetailsContainer) return;
 
     try {
         const plugins = await apiFetch(`${API_BASE_URL}/plugins`);
-        
-        // Clear existing dynamic items
-        pluginNavList.querySelectorAll('li.dynamic-plugin-nav-item').forEach(item => item.remove());
-        configDetailsContainer.querySelectorAll('section.dynamic-plugin-section').forEach(sec => sec.remove());
-        pluginNavList.querySelectorAll('.nav-category').forEach(cat => cat.remove());
 
+        // Clear existing dynamic items
+        pluginNavContainer.querySelectorAll('li.dynamic-plugin-nav-item').forEach(item => item.remove());
+        configDetailsContainer.querySelectorAll('section.dynamic-plugin-section').forEach(sec => sec.remove());
+        // 清除旧式 nav-category（兼容新结构）
+        pluginNavContainer.querySelectorAll('.nav-category').forEach(cat => cat.remove());
 
         plugins.sort((a, b) => (a.manifest.displayName || a.manifest.name).localeCompare(b.manifest.displayName || b.manifest.name));
 
@@ -30,23 +34,31 @@ export async function loadPluginList() {
         if (enabledPlugins.length > 0) {
             const enabledCategoryLi = document.createElement('li');
             enabledCategoryLi.className = 'nav-category';
-            enabledCategoryLi.textContent = '✅已启用插件';
-            pluginNavList.appendChild(enabledCategoryLi);
+            enabledCategoryLi.textContent = '已启用插件';
+            enabledCategoryLi.style.cssText = 'padding: 8px 12px 4px; font-size: 0.75em; color: var(--highlight-text); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;';
+            pluginNavContainer.appendChild(enabledCategoryLi);
             enabledPlugins.forEach(plugin => {
                 const li = createPluginNavItem(plugin);
-                pluginNavList.appendChild(li);
+                pluginNavContainer.appendChild(li);
             });
         }
 
         if (disabledPlugins.length > 0) {
             const disabledCategoryLi = document.createElement('li');
             disabledCategoryLi.className = 'nav-category';
-            disabledCategoryLi.textContent = '❎已禁用插件';
-            pluginNavList.appendChild(disabledCategoryLi);
+            disabledCategoryLi.textContent = '已禁用插件';
+            disabledCategoryLi.style.cssText = 'padding: 8px 12px 4px; font-size: 0.75em; color: var(--secondary-text); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;';
+            pluginNavContainer.appendChild(disabledCategoryLi);
             disabledPlugins.forEach(plugin => {
                 const li = createPluginNavItem(plugin);
-                pluginNavList.appendChild(li);
+                pluginNavContainer.appendChild(li);
             });
+        }
+
+        // 更新分组标题显示插件数量
+        if (pluginsGroup) {
+            const title = pluginsGroup.querySelector('.nav-group-title');
+            if (title) title.textContent = `插件管理 (${plugins.length})`;
         }
 
         plugins.forEach(plugin => {
@@ -54,7 +66,7 @@ export async function loadPluginList() {
         });
 
     } catch (error) {
-        pluginNavList.innerHTML += `<li><p class="error-message">加载插件列表失败: ${error.message}</p></li>`;
+        pluginNavContainer.innerHTML += `<li><p class="error-message">加载插件列表失败: ${error.message}</p></li>`;
     }
 }
 

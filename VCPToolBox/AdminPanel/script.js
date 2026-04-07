@@ -19,6 +19,8 @@ import { initializeDreamManager } from './js/dream-manager.js';
 import { initializeAgentScores } from './js/agent-scores.js';
 import { initializePlaceholderViewer } from './js/placeholder-viewer.js';
 import { initializeToolApprovalManager } from './js/tool-approval.js';
+import { initializeQQManager } from './js/qq-manager.js';
+import { initializeHelpSystem } from './js/help-docs.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
     // 1. 通过后端验证登录状态（替代前端 Cookie 检查，解决 HttpOnly 无法读取问题）
@@ -82,9 +84,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         stopServerLogUpdates();
 
         // 切换导航链接状态
-        document.querySelectorAll('.sidebar nav li a').forEach(link => link.classList.remove('active'));
+        document.querySelectorAll('.sidebar nav li a, .nav-group-items li a').forEach(link => link.classList.remove('active'));
         const activeLink = document.querySelector(`a[data-target="${dataTarget}"]`);
         if (activeLink) activeLink.classList.add('active');
+
+        // 自动展开目标所在的分组
+        autoExpandGroupForTarget(dataTarget);
 
         // 处理所有 section 的显示隐藏及 iframe 懒加载/卸载
         document.querySelectorAll('.config-section').forEach(section => {
@@ -167,6 +172,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                         break;
                     case 'tool-approval-manager-section':
                         initializeToolApprovalManager();
+                        break;
+                    case 'qq-manager-section':
+                        initializeQQManager();
                         break;
                 }
             }
@@ -254,30 +262,89 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     /**
+     * 初始化可折叠导航分组。
+     */
+    function initializeNavGroups() {
+        const navGroupHeaders = document.querySelectorAll('.nav-group-header');
+        navGroupHeaders.forEach(header => {
+            header.addEventListener('click', (e) => {
+                // 不要在点击子链接时触发
+                if (e.target.closest('a')) return;
+                const isExpanded = header.getAttribute('data-expanded') === 'true';
+                header.setAttribute('data-expanded', !isExpanded);
+
+                // 保存展开状态到 localStorage
+                const groupId = header.closest('.nav-group')?.dataset.group;
+                if (groupId) {
+                    const savedState = JSON.parse(localStorage.getItem('navGroupState') || '{}');
+                    savedState[groupId] = !isExpanded;
+                    localStorage.setItem('navGroupState', JSON.stringify(savedState));
+                }
+            });
+        });
+
+        // 恢复保存的展开状态
+        const savedState = JSON.parse(localStorage.getItem('navGroupState') || '{}');
+        navGroupHeaders.forEach(header => {
+            const groupId = header.closest('.nav-group')?.dataset.group;
+            if (groupId && savedState[groupId] !== undefined) {
+                header.setAttribute('data-expanded', savedState[groupId]);
+            }
+        });
+    }
+
+    /**
+     * 当导航到某个项时，自动展开其所在分组。
+     */
+    function autoExpandGroupForTarget(dataTarget) {
+        const targetLink = document.querySelector(`a[data-target="${dataTarget}"]`);
+        if (targetLink) {
+            const navGroup = targetLink.closest('.nav-group');
+            if (navGroup) {
+                const header = navGroup.querySelector('.nav-group-header');
+                if (header) {
+                    header.setAttribute('data-expanded', 'true');
+                }
+            }
+        }
+    }
+
+    /**
      * 过滤侧边栏导航项。
      */
     function filterSidebar() {
         const searchTerm = sidebarSearchInput.value.toLowerCase().trim();
-        const navLinks = document.querySelectorAll('#plugin-nav li a');
-        const categories = document.querySelectorAll('#plugin-nav li.nav-category');
 
-        navLinks.forEach(link => {
-            const linkText = link.textContent.toLowerCase();
-            const parentLi = link.parentElement;
-            parentLi.style.display = linkText.includes(searchTerm) ? '' : 'none';
+        // 过滤分组内的链接
+        const navGroups = document.querySelectorAll('.nav-group');
+        navGroups.forEach(group => {
+            const links = group.querySelectorAll('.nav-group-items li a');
+            let hasVisible = false;
+
+            links.forEach(link => {
+                const linkText = link.textContent.toLowerCase();
+                const parentLi = link.parentElement;
+                const isMatch = !searchTerm || linkText.includes(searchTerm);
+                parentLi.style.display = isMatch ? '' : 'none';
+                if (isMatch) hasVisible = true;
+            });
+
+            // 隐藏整个分组如果没有匹配项
+            group.style.display = hasVisible ? '' : 'none';
+
+            // 搜索时自动展开匹配的分组
+            if (searchTerm && hasVisible) {
+                const header = group.querySelector('.nav-group-header');
+                if (header) header.setAttribute('data-expanded', 'true');
+            }
         });
 
-        categories.forEach(category => {
-            let nextElement = category.nextElementSibling;
-            let allHidden = true;
-            while (nextElement && !nextElement.classList.contains('nav-category')) {
-                if (nextElement.style.display !== 'none') {
-                    allHidden = false;
-                    break;
-                }
-                nextElement = nextElement.nextElementSibling;
-            }
-            category.style.display = allHidden ? 'none' : '';
+        // 过滤仪表盘等独立项
+        const standaloneLinks = document.querySelectorAll('#plugin-nav > ul > li:not(.nav-group) > a');
+        standaloneLinks.forEach(link => {
+            const linkText = link.textContent.toLowerCase();
+            const parentLi = link.parentElement;
+            parentLi.style.display = (!searchTerm || linkText.includes(searchTerm)) ? '' : 'none';
         });
     }
 
@@ -314,6 +381,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (sidebarSearchInput) {
         sidebarSearchInput.addEventListener('input', filterSidebar);
+    }
+
+    // --- Initialize Nav Groups ---
+    initializeNavGroups();
+
+    // --- Initialize Help System ---
+    try {
+        initializeHelpSystem();
+    } catch (e) {
+        console.warn('Help system initialization failed:', e);
     }
 
     // --- Initial Load ---

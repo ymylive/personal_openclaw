@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QQ 扫码登录 - VCPToolBox</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);color:#e0e0e0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.container{background:rgba(255,255,255,0.05);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:40px;text-align:center;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.3)}
+h1{font-size:22px;margin-bottom:8px;color:#fff}
+.subtitle{font-size:13px;color:#888;margin-bottom:24px}
+#qr-wrapper{position:relative;width:256px;height:256px;margin:0 auto 20px;background:#fff;border-radius:12px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+#qr-canvas{width:240px;height:240px}
+#qr-overlay{position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.75);display:none;align-items:center;justify-content:center;flex-direction:column;border-radius:12px;cursor:pointer;transition:all 0.3s}
+#qr-overlay:hover{background:rgba(0,0,0,0.85)}
+#qr-overlay .icon{font-size:36px;margin-bottom:8px}
+#qr-overlay .text{font-size:14px;color:#fff}
+#status{padding:10px 20px;border-radius:10px;font-size:14px;margin-bottom:16px;transition:all 0.3s}
+.status-waiting{background:rgba(59,130,246,0.15);color:#60a5fa}
+.status-scanned{background:rgba(34,197,94,0.15);color:#4ade80}
+.status-expired{background:rgba(239,68,68,0.15);color:#f87171}
+.status-success{background:rgba(34,197,94,0.2);color:#22c55e}
+.status-error{background:rgba(239,68,68,0.15);color:#f87171}
+.status-loading{background:rgba(168,85,247,0.15);color:#c084fc}
+#login-info{display:none;padding:16px;background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.2);border-radius:12px;margin-top:16px}
+#login-info .avatar{width:64px;height:64px;border-radius:50%;margin-bottom:8px}
+#login-info .nick{font-size:18px;font-weight:600;color:#fff}
+#login-info .uin{font-size:13px;color:#888}
+.timer{font-size:12px;color:#666;margin-top:8px}
+.quick-login{margin-top:16px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.1)}
+.quick-login h3{font-size:14px;color:#888;margin-bottom:10px}
+.quick-btn{display:inline-block;padding:8px 16px;background:rgba(59,130,246,0.2);border:1px solid rgba(59,130,246,0.3);border-radius:8px;color:#60a5fa;cursor:pointer;font-size:13px;margin:4px;transition:all 0.2s}
+.quick-btn:hover{background:rgba(59,130,246,0.35)}
+.back-link{display:inline-block;margin-top:20px;color:#666;text-decoration:none;font-size:13px}
+.back-link:hover{color:#aaa}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+<div class="container">
+    <h1>QQ 扫码登录</h1>
+    <p class="subtitle">使用手机 QQ 扫描下方二维码</p>
+    <div id="qr-wrapper">
+        <div id="qr-canvas"></div>
+        <div id="qr-overlay" onclick="refreshQR()">
+            <span class="icon">&#x1f504;</span>
+            <span class="text">点击刷新二维码</span>
+        </div>
+    </div>
+    <div id="status" class="status-loading">正在获取二维码...</div>
+    <div class="timer" id="timer"></div>
+    <div id="login-info">
+        <img class="avatar" id="avatar" src="" alt="">
+        <div class="nick" id="nick"></div>
+        <div class="uin" id="uin"></div>
+    </div>
+    <div class="quick-login" id="quick-login" style="display:none">
+        <h3>快速登录</h3>
+        <div id="quick-list"></div>
+    </div>
+    <a href="/AdminPanel/index.html" class="back-link">&#8592; 返回管理面板</a>
+</div>
+<script>
+const POLL_MS=3000,EXPIRE_MS=120000;
+let statusTimer=null,expireTimer=null,qrAt=0,loggedIn=false;
+function authHdr(){const c=localStorage.getItem('adminCredentials');if(!c){location.href='/AdminPanel/login.html';return null}return{'Content-Type':'application/json','Authorization':'Basic '+c}}
+async function api(ep,body={}){const h=authHdr();if(!h)return null;try{const r=await fetch(ep,{method:'POST',headers:h,body:JSON.stringify(body)});return await r.json()}catch(e){return{code:-1,message:e.message}}}
+function setS(t,c){const e=document.getElementById('status');e.textContent=t;e.className=c}
+function overlay(s){document.getElementById('qr-overlay').style.display=s?'flex':'none'}
+
+async function getQR(){
+    overlay(false);setS('正在获取二维码...','status-loading');
+    const r=await api('/admin_api/napcat/qrcode');
+    if(!r)return;
+    if(r.code===0&&r.data&&r.data.qrcode){
+        renderQR(r.data.qrcode);setS('请使用手机 QQ 扫描二维码','status-waiting');
+        qrAt=Date.now();startPoll();startExpire();
+    }else if(r.message&&r.message.includes('Logined')){
+        setS('QQ 已登录','status-success');loggedIn=true;getInfo();
+    }else{
+        setS('获取失败: '+(r.message||'未知错误'),'status-error');
+        setTimeout(()=>overlay(true),1000);
+    }
+}
+function renderQR(url){
+    const c=document.getElementById('qr-canvas');c.innerHTML='';
+    new QRCode(c,{text:url,width:230,height:230,colorDark:'#000',colorLight:'#fff',correctLevel:QRCode.CorrectLevel.M});
+}
+async function refreshQR(){
+    overlay(false);setS('正在刷新...','status-loading');stopAll();
+    await api('/admin_api/napcat/refresh');
+    setTimeout(getQR,500);
+}
+function startExpire(){
+    if(expireTimer)clearTimeout(expireTimer);
+    expireTimer=setTimeout(()=>{
+        if(!loggedIn){setS('二维码已过期，自动刷新中...','status-expired');overlay(true);stopAll();setTimeout(refreshQR,1500)}
+    },EXPIRE_MS);
+    const tick=setInterval(()=>{
+        if(loggedIn){clearInterval(tick);document.getElementById('timer').textContent='';return}
+        const s=Math.max(0,Math.ceil((EXPIRE_MS-(Date.now()-qrAt))/1000));
+        document.getElementById('timer').textContent=s>0?'二维码剩余 '+s+' 秒':'';
+    },1000);
+}
+function startPoll(){stopPoll();statusTimer=setInterval(checkS,POLL_MS)}
+function stopPoll(){if(statusTimer){clearInterval(statusTimer);statusTimer=null}}
+function stopAll(){stopPoll();if(expireTimer){clearTimeout(expireTimer);expireTimer=null}}
+
+async function checkS(){
+    const r=await api('/admin_api/napcat/status');
+    if(!r||r.code!==0)return;
+    if(r.data.isLogin){
+        loggedIn=true;stopAll();setS('QQ 登录成功！','status-success');
+        overlay(false);document.getElementById('timer').textContent='';getInfo();
+    }else if(r.data.qrcodeurl===''&&!r.data.isLogin&&Date.now()-qrAt>EXPIRE_MS-5000){
+        stopAll();refreshQR();
+    }
+}
+async function getInfo(){
+    const r=await api('/admin_api/napcat/logininfo');
+    if(r&&r.code===0&&r.data){
+        const d=r.data,el=document.getElementById('login-info');el.style.display='block';
+        if(d.avatarUrl)document.getElementById('avatar').src=d.avatarUrl;
+        document.getElementById('nick').textContent=d.nick||d.nickName||'';
+        document.getElementById('uin').textContent='QQ: '+(d.uin||d.uid||'');
+        document.getElementById('qr-wrapper').style.display='none';
+    }
+}
+async function loadQuick(){
+    const r=await api('/admin_api/napcat/quicklogin-list');
+    if(r&&r.code===0&&r.data&&r.data.length>0){
+        document.getElementById('quick-login').style.display='block';
+        const l=document.getElementById('quick-list');l.innerHTML='';
+        r.data.forEach(a=>{
+            const b=document.createElement('span');b.className='quick-btn';
+            b.textContent=a.nickName?a.nickName+' ('+a.uin+')':a.uin;
+            b.onclick=async()=>{setS('快速登录中...','status-loading');
+                const x=await api('/admin_api/napcat/quicklogin',{uin:a.uin});
+                if(x&&x.code===0){setS('快速登录成功！','status-success');loggedIn=true;getInfo()}
+                else setS('快速登录失败: '+(x?.message||''),'status-error')};
+            l.appendChild(b);
+        });
+    }
+}
+document.addEventListener('DOMContentLoaded',()=>{getQR();loadQuick()});
+</script>
+</body>
+</html>

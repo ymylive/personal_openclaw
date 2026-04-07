@@ -427,53 +427,160 @@
             </div>
             <nav id="plugin-nav">
                 <ul>
+                    <!-- 仪表盘 - 始终可见 -->
                     <li><a href="#" data-target="dashboard" class="active"><span
                                 class="material-symbols-outlined">dashboard</span>仪表盘</a></li>
-                    <li class="nav-category">———— 核 心 功 能 ————</li>
-                    <li><a href="#" data-target="base-config"><span
-                                class="material-symbols-outlined">settings</span>全局基础配置</a></li>
-                    <li><a href="#" data-target="daily-notes-manager"><span
-                                class="material-symbols-outlined">description</span>日记知识库管理</a></li>
-                    <li><a href="#" data-target="vcp-forum"><span
-                                class="material-symbols-outlined">forum</span>VCP论坛</a></li>
-                    <li><a href="#" data-target="image-cache-editor"><span
-                                class="material-symbols-outlined">photo_library</span>多媒体Base64编辑器</a></li>
-                    <li><a href="#" data-target="semantic-groups-editor"><span
-                                class="material-symbols-outlined">hub</span>语义组编辑器</a></li>
-                    <li><a href="#" data-target="vcptavern-editor"><span
-                                class="material-symbols-outlined">casino</span>VCPTavern预设编辑</a></li>
-                    <li><a href="#" data-target="agent-files-editor"><span
-                                class="material-symbols-outlined">smart_toy</span>Agent管理器</a></li>
-                    <li><a href="#" data-target="toolbox-manager"><span
-                                class="material-symbols-outlined">inventory_2</span>Toolbox管理器</a></li>
-                    <li><a href="#" data-target="agent-assistant-config"><span
-                                class="material-symbols-outlined">diversity_3</span>Agent助手配置</a></li>
-                    <li><a href="#" data-target="agent-scores"><span
-                                class="material-symbols-outlined">leaderboard</span>Agent积分排行榜</a></li>
-                    <li><a href="#" data-target="tvs-files-editor"><span
-                                class="material-symbols-outlined">data_object</span>高级变量编辑器</a></li>
-                    <li><a href="#" data-target="tool-list-editor"><span
-                                class="material-symbols-outlined">construction</span>工具列表配置编辑器</a></li>
-                    <li><a href="#" data-target="preprocessor-order-manager"><span
-                                class="material-symbols-outlined">sort</span>预处理器顺序管理</a></li>
-                    <li><a href="#" data-target="tool-approval-manager"><span
-                                class="material-symbols-outlined">verified_user</span>插件调用审核管理</a></li>
-                    <li><a href="#" data-target="thinking-chains-editor"><span
-                                class="material-symbols-outlined">psychology</span>思维链编辑器</a></li>
-                    <li><a href="#" data-target="schedule-manager"><span
-                                class="material-symbols-outlined">calendar_month</span>日程管理</a></li>
-                    <li><a href="#" data-target="dream-manager"><span
-                                class="material-symbols-outlined">nights_stay</span>梦境审批</a></li>
-                    <li><a href="#" data-target="rag-tuning"><span
-                                class="material-symbols-outlined">tune</span>浪潮RAG调参</a></li>
-                    <li><a href="#" data-target="server-log-viewer"><span
-                                class="material-symbols-outlined">terminal</span>服务器日志</a></li>
-                    <li><a href="#" data-target="placeholder-viewer"><span
-                                class="material-symbols-outlined">view_list</span>占位符查看器</a></li>
-                    <li class="nav-category" id="plugins-category">———— 插 件 管 理 ————</li>
-                    <!-- 插件列表将动态生成在这里 -->
+
+                    <!-- 基础设置 -->
+                    <li class="nav-group" data-group="basic-settings">
+                        <div class="nav-group-header" data-expanded="true">
+                            <span class="material-symbols-outlined nav-group-icon">settings</span>
+                            <span class="nav-group-title">基础设置</span>
+                            <span class="material-symbols-outlined nav-group-chevron">expand_more</span>
+                        </div>
+                        <ul class="nav-group-items">
+                            <li><a href="#" data-target="base-config"><span
+                                        class="material-symbols-outlined">tune</span>全局基础配置</a></li>
+                        </ul>
+                    </li>
+
+                    <!-- Agent 管理 -->
+                    <li class="nav-group" data-group="agent-management">
+                        <div class="nav-group-header">
+                            <span class="material-symbols-outlined nav-group-icon">smart_toy</span>
+                            <span class="nav-group-title">Agent 管理</span>
+                            <span class="material-symbols-outlined nav-group-chevron">expand_more</span>
+                        </div>
+                        <ul class="nav-group-items">
+                            <li><a href="#" data-target="agent-files-editor"><span
+                                        class="material-symbols-outlined">smart_toy</span>Agent 管理器</a></li>
+                            <li><a href="#" data-target="agent-assistant-config"><span
+                                        class="material-symbols-outlined">diversity_3</span>Agent 助手配置</a></li>
+                            <li><a href="#" data-target="agent-scores"><span
+                                        class="material-symbols-outlined">leaderboard</span>Agent 积分排行榜</a></li>
+                            <li><a href="#" data-target="dream-manager"><span
+                                        class="material-symbols-outlined">nights_stay</span>梦境审批</a></li>
+                        </ul>
+                    </li>
+
+                    <!-- 内容与知识库 -->
+                    <li class="nav-group" data-group="content-knowledge">
+                        <div class="nav-group-header">
+                            <span class="material-symbols-outlined nav-group-icon">library_books</span>
+                            <span class="nav-group-title">内容与知识库</span>
+                            <span class="material-symbols-outlined nav-group-chevron">expand_more</span>
+                        </div>
+                        <ul class="nav-group-items">
+                            <li><a href="#" data-target="daily-notes-manager"><span
+                                        class="material-symbols-outlined">description</span>日记知识库管理</a></li>
+                            <li><a href="#" data-target="vcp-forum"><span
+                                        class="material-symbols-outlined">forum</span>VCP 论坛</a></li>
+                            <li><a href="#" data-target="image-cache-editor"><span
+                                        class="material-symbols-outlined">photo_library</span>多媒体 Base64 编辑器</a></li>
+                            <li><a href="#" data-target="vcptavern-editor"><span
+                                        class="material-symbols-outlined">casino</span>VCPTavern 预设编辑</a></li>
+                        </ul>
+                    </li>
+
+                    <!-- RAG 与 AI -->
+                    <li class="nav-group" data-group="rag-ai">
+                        <div class="nav-group-header">
+                            <span class="material-symbols-outlined nav-group-icon">psychology</span>
+                            <span class="nav-group-title">RAG 与 AI</span>
+                            <span class="material-symbols-outlined nav-group-chevron">expand_more</span>
+                        </div>
+                        <ul class="nav-group-items">
+                            <li><a href="#" data-target="semantic-groups-editor"><span
+                                        class="material-symbols-outlined">hub</span>语义组编辑器</a></li>
+                            <li><a href="#" data-target="thinking-chains-editor"><span
+                                        class="material-symbols-outlined">psychology</span>思维链编辑器</a></li>
+                            <li><a href="#" data-target="rag-tuning"><span
+                                        class="material-symbols-outlined">tune</span>浪潮 RAG 调参</a></li>
+                            <li><a href="#" data-target="placeholder-viewer"><span
+                                        class="material-symbols-outlined">view_list</span>占位符查看器</a></li>
+                        </ul>
+                    </li>
+
+                    <!-- 工具与插件 -->
+                    <li class="nav-group" data-group="tools-plugins">
+                        <div class="nav-group-header">
+                            <span class="material-symbols-outlined nav-group-icon">construction</span>
+                            <span class="nav-group-title">工具与插件</span>
+                            <span class="material-symbols-outlined nav-group-chevron">expand_more</span>
+                        </div>
+                        <ul class="nav-group-items">
+                            <li><a href="#" data-target="toolbox-manager"><span
+                                        class="material-symbols-outlined">inventory_2</span>Toolbox 管理器</a></li>
+                            <li><a href="#" data-target="tool-list-editor"><span
+                                        class="material-symbols-outlined">construction</span>工具列表配置编辑器</a></li>
+                            <li><a href="#" data-target="tool-approval-manager"><span
+                                        class="material-symbols-outlined">verified_user</span>插件调用审核管理</a></li>
+                            <li><a href="#" data-target="preprocessor-order-manager"><span
+                                        class="material-symbols-outlined">sort</span>预处理器顺序管理</a></li>
+                        </ul>
+                    </li>
+
+                    <!-- 高级设置 -->
+                    <li class="nav-group" data-group="advanced">
+                        <div class="nav-group-header">
+                            <span class="material-symbols-outlined nav-group-icon">data_object</span>
+                            <span class="nav-group-title">高级设置</span>
+                            <span class="material-symbols-outlined nav-group-chevron">expand_more</span>
+                        </div>
+                        <ul class="nav-group-items">
+                            <li><a href="#" data-target="tvs-files-editor"><span
+                                        class="material-symbols-outlined">data_object</span>高级变量编辑器</a></li>
+                            <li><a href="#" data-target="schedule-manager"><span
+                                        class="material-symbols-outlined">calendar_month</span>日程管理</a></li>
+                        </ul>
+                    </li>
+
+                    <!-- 系统运维 -->
+                    <li class="nav-group" data-group="system-ops">
+                        <div class="nav-group-header">
+                            <span class="material-symbols-outlined nav-group-icon">monitoring</span>
+                            <span class="nav-group-title">系统运维</span>
+                            <span class="material-symbols-outlined nav-group-chevron">expand_more</span>
+                        </div>
+                        <ul class="nav-group-items">
+                            <li><a href="#" data-target="server-log-viewer"><span
+                                        class="material-symbols-outlined">terminal</span>服务器日志</a></li>
+                        </ul>
+                    </li>
+
+                    <!-- QQ 服务 -->
+                    <li class="nav-group" data-group="qq-service">
+                        <div class="nav-group-header">
+                            <span class="material-symbols-outlined nav-group-icon">chat</span>
+                            <span class="nav-group-title">QQ 服务</span>
+                            <span class="material-symbols-outlined nav-group-chevron">expand_more</span>
+                        </div>
+                        <ul class="nav-group-items">
+                            <li><a href="#" data-target="qq-manager"><span
+                                        class="material-symbols-outlined">robot_2</span>QQ 机器人管理</a></li>
+                        </ul>
+                    </li>
+
+                    <!-- 插件管理 - 动态填充 -->
+                    <li class="nav-group" data-group="plugins-management" id="plugins-category">
+                        <div class="nav-group-header">
+                            <span class="material-symbols-outlined nav-group-icon">extension</span>
+                            <span class="nav-group-title">插件管理</span>
+                            <span class="material-symbols-outlined nav-group-chevron">expand_more</span>
+                        </div>
+                        <ul class="nav-group-items">
+                            <!-- 插件列表将动态生成在这里 -->
+                        </ul>
+                    </li>
                 </ul>
             </nav>
+            <!-- 帮助按钮 -->
+            <div class="sidebar-footer">
+                <button id="help-center-button" class="help-button">
+                    <span class="material-symbols-outlined">help</span>
+                    帮助中心
+                </button>
+            </div>
         </aside>
 
         <main class="content" id="config-details-container">
@@ -1394,7 +1501,30 @@
                     padding: 6px 12px;
                 }
             </style>
+
+            <!-- Section: QQ Bot Manager -->
+            <section id="qq-manager-section" class="config-section">
+                <h2><span class="material-symbols-outlined" style="vertical-align: middle; margin-right: 8px;">robot_2</span>QQ 机器人管理</h2>
+                <p class="description">管理 NapCat QQ 机器人的连接配置、群聊白名单、关键词触发等设置。QQ 机器人通过 OneBot11 WebSocket 协议连接 NapCat，桥接群消息到 VCPToolBox Chat API。</p>
+                <div id="qq-manager-content">
+                    <p style="text-align: center; padding: 40px; opacity: 0.6;">正在加载 QQ 机器人配置...</p>
+                </div>
+            </section>
         </main>
+    </div>
+
+    <!-- 帮助面板 (右侧滑出) -->
+    <div id="help-panel" class="help-panel" aria-hidden="true">
+        <div class="help-panel-backdrop"></div>
+        <div class="help-panel-content">
+            <div class="help-panel-header">
+                <h2><span class="material-symbols-outlined">help</span> 帮助中心</h2>
+                <button id="help-panel-close" class="help-panel-close"><span class="material-symbols-outlined">close</span></button>
+            </div>
+            <div id="help-panel-body" class="help-panel-body">
+                <!-- 帮助内容由 help-docs.js 动态填充 -->
+            </div>
+        </div>
     </div>
 
     <div id="loading-overlay" class="loading-overlay">
