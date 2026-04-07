@@ -29,7 +29,7 @@ function httpPost(url, data) {
             path: parsed.pathname,
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-            timeout: 25000
+            timeout: 15000
         }, (res) => {
             let chunks = '';
             res.on('data', c => chunks += c);
@@ -143,7 +143,7 @@ function formatResults(engineResults) {
 async function processRequest(request) {
     const query = request.query || request.q || request.text;
     if (!query) {
-        return { success: false, error: '缺少搜索关键词。请提供 query 参数。' };
+        return { status: 'error', error: '缺少搜索关键词。请提供 query 参数。' };
     }
 
     const maxResults = parseInt(request.max_results || request.count || '5', 10);
@@ -164,15 +164,15 @@ async function processRequest(request) {
     // 验证引擎
     const validEngines = engines.filter(e => AVAILABLE_ENGINES.includes(e));
     if (validEngines.length === 0) {
-        return { success: false, error: `无有效引擎。可选: ${AVAILABLE_ENGINES.join(', ')}` };
+        return { status: 'error', error: `无有效引擎。可选: ${AVAILABLE_ENGINES.join(', ')}` };
     }
 
     try {
         const results = await multiSearch(query, validEngines, maxResults);
         const { output, totalCount } = formatResults(results);
-        return { success: true, data: output, resultCount: totalCount };
+        return { status: 'success', data: output, resultCount: totalCount };
     } catch (e) {
-        return { success: false, error: `搜索失败: ${e.message}` };
+        return { status: 'error', error: `搜索失败: ${e.message}` };
     }
 }
 
@@ -184,6 +184,6 @@ rl.on('line', async (line) => {
         const result = await processRequest(request);
         process.stdout.write(JSON.stringify(result) + '\n');
     } catch (e) {
-        process.stdout.write(JSON.stringify({ success: false, error: e.message }) + '\n');
+        process.stdout.write(JSON.stringify({ status: 'error', error: e.message }) + '\n');
     }
 });
