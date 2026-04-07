@@ -57,7 +57,24 @@ function isPathAllowed(targetPath, operationType = 'generic') {
     return true;
   }
 
-  // 2. 如果路径在允许的目录之外，则只对只读操作开绿灯。
+  // 2a. 敏感路径拦截 - 无论任何操作类型，一律拒绝访问
+  const SENSITIVE_PATHS = [
+    'config.env', '.env', 'ip_blacklist.json', 'code.bin', 'auth_code.txt',
+    '.ssh', '.bash_history', '.gitconfig', 'id_rsa', 'id_ed25519',
+    'shadow', 'passwd'
+  ];
+  const SENSITIVE_DIRS = [
+    '/etc', '/root', '/proc', '/sys', '/dev'
+  ];
+  const basename = path.basename(resolvedPath).toLowerCase();
+  const isSensitiveFile = SENSITIVE_PATHS.some(sp => basename === sp.toLowerCase() || basename.endsWith('.key') || basename.endsWith('.pem'));
+  const isSensitiveDir = SENSITIVE_DIRS.some(sd => resolvedPath.startsWith(sd));
+  if (isSensitiveFile || isSensitiveDir) {
+    debugLog('Access DENIED: sensitive path detected.', { targetPath, operationType });
+    return false;
+  }
+
+  // 2b. 如果路径在允许的目录之外，则只对只读操作开绿灯。
   const readOnlyBypassOperations = ['ReadFile', 'FileInfo'];
   if (readOnlyBypassOperations.includes(operationType) && path.isAbsolute(targetPath)) {
     debugLog(`Path is outside allowed directories, but operation is a read-only bypass. Access granted.`, { targetPath, operationType });
@@ -1725,3 +1742,4 @@ process.on('SIGINT', () => {
 });
 
 debugLog('FileOperator plugin started and listening for requests');
+

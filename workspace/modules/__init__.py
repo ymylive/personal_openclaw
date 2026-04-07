@@ -1,2 +1,0 @@
-"""Package for workspace modules."""
-

@@ -129,7 +129,6 @@ const LOGIN_ATTEMPT_WINDOW = 15 * 60 * 1000; // 15分钟的窗口
 const TEMP_BLOCK_DURATION = 30 * 60 * 1000; // 封禁30分钟
 
 const ChatCompletionHandler = require('./modules/chatCompletionHandler.js');
-const { createQQBotAdapter, getQQBotAdapter } = require('./modules/qqBotAdapter.js');
 
 const activeRequests = new Map(); // 新增：用于存储活动中的请求，以便中止
 
@@ -1154,6 +1153,7 @@ app.post('/plugin-callback/:pluginName/:taskId', async (req, res) => {
     res.status(200).json({ status: "success", message: "Callback received and processed" });
 });
 
+
 async function initialize() {
     console.log('开始初始化向量数据库...');
     await knowledgeBaseManager.initialize(); // 在加载插件之前启动，确保服务就绪
@@ -1310,23 +1310,6 @@ async function startServer() {
         FileFetcherServer.initialize(webSocketServer);
 
         if (DEBUG_MODE) console.log('[Server] WebSocketServer, PluginManager, and FileFetcherServer have been interconnected.');
-
-        // ─── QQ Bot 适配器初始化 ───
-        if (process.env.QQ_ENABLED === 'true') {
-            console.log('[Server] Initializing QQ Bot adapter...');
-            try {
-                const qqAdapter = createQQBotAdapter();
-                qqAdapter.initialize(chatCompletionHandler).then(() => {
-                    console.log('[Server] QQ Bot adapter initialized successfully.');
-                }).catch(err => {
-                    console.error('[Server] QQ Bot adapter initialization failed:', err.message);
-                });
-            } catch (err) {
-                console.error('[Server] Failed to create QQ Bot adapter:', err.message);
-            }
-        } else {
-            console.log('[Server] QQ Bot adapter disabled (QQ_ENABLED != true)');
-        }
     });
 }
 
@@ -1338,13 +1321,6 @@ startServer().catch(err => {
 
 async function gracefulShutdown() {
     console.log('Initiating graceful shutdown...');
-
-    // 关闭 QQ Bot 适配器
-    const qqAdapter = getQQBotAdapter();
-    if (qqAdapter) {
-        console.log('[Server] Shutting down QQ Bot adapter...');
-        qqAdapter.close();
-    }
 
     if (taskScheduler) {
         taskScheduler.shutdown();

@@ -7,7 +7,7 @@ FROM node:20-alpine AS build
 WORKDIR /usr/src/app
 
 # 更换为国内镜像源以加速
-# Use default Alpine repos (international server)
+RUN # mirrors kept default for HK server
 
 # 安装所有运行时和编译时依赖
 RUN apk add --no-cache \
@@ -39,18 +39,18 @@ COPY package*.json ./
 # 如果遇到 npm install 速度过慢的问题，可以尝试更换下面的镜像源。
 # 国内常用镜像:
 # --registry=https://registry.npm.taobao.org (淘宝旧版)
-# --registry=https://registry.npmjs.org (淘宝新版)
+#  (淘宝新版)
 # --registry=https://mirrors.huaweicloud.com/repository/npm/ (华为云)
 # 国际通用 (如果服务器在海外):
 # (默认，无需指定)
-RUN npm cache clean --force && npm install --registry=https://registry.npmjs.org
+RUN npm cache clean --force && npm install 
 
 # 复制 Python 依赖定义文件并安装
 COPY requirements.txt ./
 # 在 Linux 环境下构建时，注释掉仅适用于 Windows 的 win10toast 包
 RUN sed -i '/^win10toast/s/^/#/' requirements.txt
-RUN python3 -m pip install --no-cache-dir --break-system-packages -U pip setuptools wheel -i https://pypi.org/simple
-RUN pip3 install --no-cache-dir --break-system-packages --target=/usr/src/app/pydeps -i https://pypi.org/simple -r requirements.txt
+RUN python3 -m pip install --no-cache-dir --break-system-packages -U pip setuptools wheel 
+RUN pip3 install --no-cache-dir --break-system-packages --target=/usr/src/app/pydeps  -r requirements.txt
 
 # 复制所有源代码
 COPY . .
@@ -61,7 +61,7 @@ COPY . .
 RUN find Plugin -name requirements.txt -exec sh -c ' \
     for req_file do \
         echo ">>> Installing Python dependencies from $req_file"; \
-        pip3 install --no-cache-dir --break-system-packages --target=/usr/src/app/pydeps -i https://pypi.org/simple -r "$req_file" || \
+        pip3 install --no-cache-dir --break-system-packages --target=/usr/src/app/pydeps  -r "$req_file" || \
             { echo "!!! Failed to install Python dependencies from $req_file"; exit 1; }; \
     done' sh {} +
 
@@ -72,7 +72,7 @@ RUN find Plugin -name package.json -exec sh -c ' \
     for pkg_file do \
         plugin_dir=$(dirname "$pkg_file"); \
         echo ">>> Installing Node.js dependencies in $plugin_dir"; \
-        (cd "$plugin_dir" && npm install --registry=https://registry.npmjs.org --legacy-peer-deps) || \
+        (cd "$plugin_dir" && npm install  --legacy-peer-deps) || \
             { echo "!!! Failed to install Node.js dependencies in $plugin_dir"; exit 1; }; \
     done' sh {} +
 
@@ -86,7 +86,8 @@ WORKDIR /usr/src/app
 
 # 仅安装运行时的系统依赖
 # 添加 chromium 及其所需依赖，以供 UrlFetch (Puppeteer) 工具使用
-RUN apk add --no-cache \
+RUN # mirrors kept default for HK server && \
+  apk add --no-cache \
   chromium \
   nss \
   freetype \

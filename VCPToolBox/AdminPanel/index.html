@@ -711,7 +711,7 @@
 
             <section id="toolbox-manager-section" class="config-section">
                 <h2>Toolbox 管理器</h2>
-                <p class="description">维护 toolbox_map.json（alias→file+description），并编辑 TVStxt 下映射文件内容。</p>
+                <p class="description">支持两种折叠模式： <code>[===vcp_fold:0.55===]</code> 按 toolbox 总描述判定的累计展开模式； <code>[===vcp_fold:0.55::desc:描述===]</code> 按块 description 单独判定的精确展开模式。</p>
                 <div class="agent-manager-container">
                     <div class="agent-map-editor">
                         <h3>Toolbox 映射表</h3>
@@ -733,7 +733,7 @@
                             <span id="toolbox-file-status" class="status-message"></span>
                         </div>
                         <textarea id="toolbox-file-content-editor" spellcheck="false"
-                            placeholder="从左侧选择一个 Toolbox 以编辑其关联文件..."></textarea>
+                            placeholder="从左侧选择一个 Toolbox 以编辑其关联文件...&#10;&#10;可使用新语法：[===vcp_fold:0.55::desc:你的描述===]"></textarea>
                     </div>
                 </div>
             </section>
@@ -1117,6 +1117,7 @@
                 </div>
             </section>
 
+            <!-- Section: Dream Manager -->
             <section id="dream-manager-section" class="config-section">
                 <h2>🌙 梦境审批</h2>
                 <p class="description">查看和审批 Agent 在梦境中发起的日记操作。批准后将执行实际的文件操作。</p>
