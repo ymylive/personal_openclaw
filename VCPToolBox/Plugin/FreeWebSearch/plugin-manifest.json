@@ -1,0 +1,27 @@
+{
+  "manifestVersion": "1.0.0",
+  "name": "FreeWebSearch",
+  "version": "1.0.0",
+  "displayName": "免费联网搜索 (多引擎聚合)",
+  "description": "无需API Key的多引擎聚合搜索插件，支持DuckDuckGo、维基百科、Brave搜索。",
+  "author": "VCP",
+  "pluginType": "synchronous",
+  "entryPoint": {
+    "type": "nodejs",
+    "command": "node FreeWebSearch.js"
+  },
+  "communication": {
+    "protocol": "stdio",
+    "timeout": 30000
+  },
+  "configSchema": {},
+  "capabilities": {
+    "invocationCommands": [
+      {
+        "commandIdentifier": "FreeWebSearch",
+        "description": "调用此工具进行免费多引擎聚合网页搜索，无需任何API Key。支持DuckDuckGo、Brave和维基百科三大搜索源，自动并行检索并去重汇总结果。重要提示：请优先使用中文关键词进行检索，并在搜索词中附带当前日期或年份信息（如「2026年」），以获得更精准、更时效的结果。\n参数:\n- query (字符串, 必需): 需要搜索的关键词或问题。\n- engines (字符串, 可选, 默认 'brave,wikipedia'): 指定搜索引擎，多个用逗号分隔。可选值: 'duckduckgo', 'brave', 'wikipedia'。\n- max_results (整数, 可选, 默认 5): 每个引擎返回的最大结果数量。\n- language (字符串, 可选, 默认 'zh-CN'): 搜索语言偏好。\n调用格式:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」FreeWebSearch「末」,\nquery:「始」搜索关键词「末」,\nengines:「始」duckduckgo,wikipedia「末」,\nmax_results:「始」5「末」,\nlanguage:「始」zh-CN「末」\n<<<[END_TOOL_REQUEST]>>>\n\n重要提示给AI：\n当此工具执行完毕后，您将收到包含多引擎聚合搜索结果的文本。请基于这些结果回答用户的问题或完成相关任务。请优先使用中文词作为检索词，并带上即时信息（如当前年份、月份等）进行检索，以获得更准确的结果。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」FreeWebSearch「末」,\nquery:「始」2026年人工智能最新进展「末」,\nengines:「始」duckduckgo,wikipedia「末」,\nmax_results:「始」5「末」\n<<<[END_TOOL_REQUEST]>>>"
+      }
+    ]
+  }
+}
