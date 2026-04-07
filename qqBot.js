@@ -26,6 +26,7 @@ class QQBot {
 
         // 加载 Agent 人设
         this.agentPrompt = this._loadAgentPrompt();
+        this.toolPassword = '';
 
         this.ws = null;
         this.reconnectTimer = null;
@@ -34,6 +35,24 @@ class QQBot {
         this.recentMessages = new Map(); // chatId -> [{role,content}]
         this.pendingMedia = new Map();   // `${chatId}_${userId}` -> { imageUrls, files, timer, messageId, ... }
         this.mediaWaitMs = 8000;         // 等待文字的超时（8秒）
+    }
+
+    async _loadToolPassword() {
+        try {
+            const { getAuthCode } = require('./modules/captchaDecoder');
+            const pwd = await getAuthCode('./Plugin/UserAuth/code.bin');
+            if (pwd) {
+                console.log(`[QQBot] Tool password loaded (captcha): ${pwd.substring(0, 3)}***`);
+                return pwd;
+            }
+        } catch (e) {
+            console.warn(`[QQBot] captchaDecoder failed: ${e.message}, trying auth_code.txt`);
+        }
+        try {
+            const code = fs.readFileSync(path.join(__dirname, 'Plugin', 'UserAuth', 'auth_code.txt'), 'utf-8').trim();
+            console.log(`[QQBot] Tool password loaded (txt): ${code.substring(0, 3)}***`);
+            return code;
+        } catch (e) { return ''; }
     }
 
     _loadAgentPrompt() {
@@ -58,7 +77,8 @@ class QQBot {
         }
     }
 
-    start() {
+    async start() {
+        this.toolPassword = await this._loadToolPassword();
         console.log(`[QQBot] Starting... WS: ${this.wsUrl}, Agent: ${this.agentName}`);
         console.log(`[QQBot] Allowed groups: ${this.allowedGroups.join(', ') || 'ALL'}`);
         this._connect();
@@ -428,7 +448,13 @@ class QQBot {
             if (this.agentPrompt) {
                 messages.push({ role: 'system', content: this.agentPrompt });
             }
-            messages.push({ role: 'system', content: envHint + permissionHint });
+            // 工具密码（VCPToolCode 验证必需）
+            if (!this.toolPassword) this.toolPassword = await this._loadToolPassword();
+            const currentToolPwd = this.toolPassword;
+            const toolPasswordHint = currentToolPwd
+                ? `\n[工具验证密码] 调用任何工具时，必须在 TOOL_REQUEST 中包含 tool_password:「始」${currentToolPwd}「末」 字段，否则工具调用会被拒绝。`
+                : '';
+            messages.push({ role: 'system', content: envHint + permissionHint + toolPasswordHint });
             // 添加历史上下文
             messages.push(...history.slice(-10));
 
