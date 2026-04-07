@@ -99,8 +99,52 @@ const QQ_CONFIG_FIELDS = [
     }
 ];
 
-// 所有 QQ 配置键集合
-const QQ_CONFIG_KEYS = new Set(QQ_CONFIG_FIELDS.map(f => f.key));
+// RAG 记忆系统依赖的 Embedding 配置
+const EMBEDDING_CONFIG_FIELDS = [
+    {
+        key: 'EMBEDDING_API_URL',
+        label: 'Embedding API 地址',
+        description: '向量嵌入模型的 API 地址（留空则使用主 API 地址）',
+        type: 'string',
+        default: '',
+        placeholder: 'https://api.example.com'
+    },
+    {
+        key: 'EMBEDDING_API_KEY',
+        label: 'Embedding API 密钥',
+        description: '向量嵌入模型的 API 密钥（留空则使用主 API 密钥）',
+        type: 'password',
+        default: '',
+        placeholder: '留空=使用主 API_Key'
+    },
+    {
+        key: 'WhitelistEmbeddingModel',
+        label: 'Embedding 模型名称',
+        description: 'RAG 记忆检索使用的嵌入模型，如 gemini-embedding-2-preview、text-embedding-3-small',
+        type: 'string',
+        default: '',
+        placeholder: 'gemini-embedding-2-preview'
+    },
+    {
+        key: 'WhitelistEmbeddingModelMaxToken',
+        label: 'Embedding 最大 Token',
+        description: '单次嵌入请求的最大 Token 数',
+        type: 'integer',
+        default: '8000',
+        placeholder: '8000'
+    },
+    {
+        key: 'VECTORDB_DIMENSION',
+        label: '向量维度',
+        description: '必须与 Embedding 模型输出维度一致（gemini-embedding-2: 3072, text-embedding-3-small: 1536）',
+        type: 'integer',
+        default: '3072',
+        placeholder: '3072'
+    }
+];
+
+// 所有管理的配置键集合
+const QQ_CONFIG_KEYS = new Set([...QQ_CONFIG_FIELDS, ...EMBEDDING_CONFIG_FIELDS].map(f => f.key));
 
 // 模块状态
 let fullConfigContent = '';
@@ -165,6 +209,15 @@ function buildManagerHTML() {
                         行为参数
                     </h3>
                     <div id="qq-behavior-fields" class="config-fields"></div>
+                </div>
+
+                <div class="qq-config-section">
+                    <h3 class="section-title">
+                        <span class="material-symbols-outlined">psychology</span>
+                        RAG 记忆系统 (Embedding)
+                    </h3>
+                    <p style="font-size:0.85em;color:var(--secondary-text);margin:0 0 12px;">RAG 记忆检索依赖向量嵌入模型。配置独立的 Embedding API 以启用 Agent 记忆和自我改进系统。</p>
+                    <div id="qq-embedding-fields" class="config-fields"></div>
                 </div>
 
                 <div class="qq-form-actions">
@@ -512,9 +565,12 @@ function renderConfigFields() {
     const groupKeys = ['QQ_ALLOWED_GROUPS', 'QQ_ADMIN_USERS'];
     const behaviorKeys = ['QQ_KEYWORD_TRIGGERS', 'QQ_COOLDOWN_SECONDS', 'QQ_RATE_LIMIT_PER_MINUTE', 'QQ_MAX_MESSAGE_LENGTH', 'QQ_RECENT_MSG_LIMIT'];
 
+    const embeddingKeys = EMBEDDING_CONFIG_FIELDS.map(f => f.key);
+
     renderFieldGroup('qq-connection-fields', connectionKeys);
     renderFieldGroup('qq-group-fields', groupKeys);
     renderFieldGroup('qq-behavior-fields', behaviorKeys);
+    renderFieldGroup('qq-embedding-fields', embeddingKeys);
 }
 
 /**
@@ -526,7 +582,7 @@ function renderFieldGroup(containerId, keys) {
     container.innerHTML = '';
 
     keys.forEach(key => {
-        const fieldDef = QQ_CONFIG_FIELDS.find(f => f.key === key);
+        const fieldDef = QQ_CONFIG_FIELDS.find(f => f.key === key) || EMBEDDING_CONFIG_FIELDS.find(f => f.key === key);
         if (!fieldDef) return;
 
         const currentValue = getConfigValue(key);
