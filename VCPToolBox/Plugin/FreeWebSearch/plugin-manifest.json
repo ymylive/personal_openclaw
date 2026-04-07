@@ -3,7 +3,7 @@
   "name": "FreeWebSearch",
   "version": "1.0.0",
   "displayName": "免费联网搜索 (多引擎聚合)",
-  "description": "无需API Key的多引擎聚合搜索插件，支持DuckDuckGo、维基百科、Brave搜索。",
+  "description": "无需API Key的多引擎聚合搜索插件，支持百度、必应、DuckDuckGo、Brave、Startpage、维基百科。",
   "author": "VCP",
   "pluginType": "synchronous",
   "entryPoint": {
