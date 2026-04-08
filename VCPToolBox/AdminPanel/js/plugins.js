@@ -1,5 +1,5 @@
 // AdminPanel/js/plugins.js
-import { apiFetch, showMessage } from './utils.js';
+import { apiFetch, showMessage, escapeHTML } from './utils.js';
 import { parseEnvToList, buildEnvStringForPlugin, createFormGroup, createCommentOrEmptyElement } from './config.js';
 
 const API_BASE_URL = '/admin_api';
@@ -66,7 +66,7 @@ export async function loadPluginList() {
         });
 
     } catch (error) {
-        pluginNavContainer.innerHTML += `<li><p class="error-message">加载插件列表失败: ${error.message}</p></li>`;
+        pluginNavContainer.innerHTML += `<li><p class="error-message">加载插件列表失败: ${escapeHTML(error.message)}</p></li>`;
     }
 }
 
@@ -82,11 +82,11 @@ function createPluginNavItem(plugin) {
     a.href = '#';
     const originalName = plugin.manifest.name;
     const displayName = plugin.manifest.displayName || originalName;
-    let nameHtml = displayName;
+    let nameHtml = escapeHTML(displayName);
     if (plugin.isDistributed) {
-        nameHtml += ` <span class="plugin-type-icon" title="分布式插件 (来自: ${plugin.serverId || '未知'})">☁️</span>`;
+        nameHtml += ` <span class="plugin-type-icon" title="分布式插件 (来自: ${escapeHTML(plugin.serverId || '未知')})">☁️</span>`;
     }
-    nameHtml += `<br><span class="plugin-original-name">(${originalName})</span>`;
+    nameHtml += `<br><span class="plugin-original-name">(${escapeHTML(originalName)})</span>`;
     a.innerHTML = nameHtml;
     a.dataset.target = `plugin-${plugin.manifest.name}-config`;
     a.dataset.pluginName = plugin.manifest.name;
@@ -107,15 +107,15 @@ function createPluginConfigSection(plugin, container) {
     const originalName = plugin.manifest.name;
     const displayName = plugin.manifest.displayName || originalName;
     
-    let descriptionHtml = plugin.manifest.description || '暂无描述';
-    if (plugin.manifest.version) descriptionHtml += ` (版本: ${plugin.manifest.version})`;
-    if (plugin.isDistributed) descriptionHtml += ` (来自节点: ${plugin.serverId || '未知'})`;
+    let descriptionHtml = escapeHTML(plugin.manifest.description || '暂无描述');
+    if (plugin.manifest.version) descriptionHtml += ` (版本: ${escapeHTML(plugin.manifest.version)})`;
+    if (plugin.isDistributed) descriptionHtml += ` (来自节点: ${escapeHTML(plugin.serverId || '未知')})`;
     if (!plugin.enabled) descriptionHtml += ' <span class="plugin-disabled-badge">(已禁用)</span>';
 
-    let titleHtml = `${displayName} <span class="plugin-original-name">(${originalName})</span> 配置`;
+    let titleHtml = `${escapeHTML(displayName)} <span class="plugin-original-name">(${escapeHTML(originalName)})</span> 配置`;
     if (!plugin.enabled) titleHtml += ' <span class="plugin-disabled-badge-title">(已禁用)</span>';
     if (plugin.isDistributed) titleHtml += ' <span class="plugin-type-icon" title="分布式插件">☁️</span>';
-    
+
     pluginSection.innerHTML = `<h2>${titleHtml}</h2><p class="plugin-meta">${descriptionHtml}</p>`;
 
     const pluginControlsDiv = document.createElement('div');
@@ -282,7 +282,7 @@ export async function loadPluginConfig(pluginName) {
         }
 
     } catch (error) {
-        form.innerHTML = `<p class="error-message">加载插件 ${pluginName} 配置失败: ${error.message}</p>`;
+        form.innerHTML = `<p class="error-message">加载插件 ${escapeHTML(pluginName)} 配置失败: ${escapeHTML(error.message)}</p>`;
     }
 }
 
@@ -305,7 +305,7 @@ async function handlePluginFormSubmit(event) {
         });
         showMessage(`${pluginName} 配置已保存！更改可能需要重启插件或服务生效。`, 'success');
         loadPluginConfig(pluginName);
-    } catch (error) { /* Error handled by apiFetch */ }
+    } catch (error) { console.warn(`Failed to save plugin ${pluginName} config:`, error.message); }
 }
 
 /**
@@ -361,7 +361,7 @@ function createInvocationCommandsEditor(pluginName, commands) {
         commandItem.className = 'command-item';
         commandItem.dataset.commandIdentifier = commandIdentifier;
 
-        commandItem.innerHTML = `<h4>命令: ${commandIdentifier}</h4>`;
+        commandItem.innerHTML = `<h4>命令: ${escapeHTML(commandIdentifier)}</h4>`;
 
         const cmdFormGroup = document.createElement('div');
         cmdFormGroup.className = 'form-group';

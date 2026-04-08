@@ -395,12 +395,8 @@ const adminAuth = (req, res, next) => {
         // 验证登录的端点也需要特殊处理（允许无凭据时返回401而不是重定向）
         const isVerifyEndpoint = req.path === '/admin_api/verify-login';
 
-        // ========== 新增：只读仪表板接口白名单（不计入登录失败次数）==========
+        // ========== 只读仪表板接口白名单（不计入登录失败次数）==========
         const readOnlyDashboardPaths = [
-            '/admin_api/system-monitor',
-            '/admin_api/newapi-monitor',
-            '/admin_api/server-log',
-            '/admin_api/user-auth-code',
             '/admin_api/weather'
         ];
         const isReadOnlyPath = readOnlyDashboardPaths.some(path => req.path.startsWith(path));

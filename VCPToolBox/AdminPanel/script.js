@@ -2,7 +2,7 @@
 import { apiFetch, showMessage, checkAuthStatus } from './js/utils.js';
 import { parseEnvToList, buildEnvString, createFormGroup, createCommentOrEmptyElement } from './js/config.js';
 import { loadPluginList, loadPluginConfig } from './js/plugins.js';
-import { initializeDashboard, stopDashboardUpdates } from './js/dashboard.js';
+import { initializeDashboard, stopDashboardUpdates, cleanupDashboard } from './js/dashboard.js';
 import { initializeDailyNotesManager } from './js/notes-manager.js';
 import { initializeAgentManager } from './js/agent-manager.js';
 import { initializeAgentAssistantConfig } from './js/agent-assistant-config.js';
@@ -19,7 +19,7 @@ import { initializeDreamManager } from './js/dream-manager.js';
 import { initializeAgentScores } from './js/agent-scores.js';
 import { initializePlaceholderViewer } from './js/placeholder-viewer.js';
 import { initializeToolApprovalManager } from './js/tool-approval.js';
-import { initializeQQManager } from './js/qq-manager.js';
+import { initializeQQManager, cleanupQQManager } from './js/qq-manager.js';
 import { initializeHelpSystem } from './js/help-docs.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -79,9 +79,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const sectionIdToActivate = `${dataTarget}-section`;
         const pluginName = document.querySelector(`a[data-target="${dataTarget}"]`)?.dataset.pluginName;
 
-        // 停止可能正在运行的定时器
-        stopDashboardUpdates();
+        // 清理前一个页面的定时器和资源
+        cleanupDashboard();
         stopServerLogUpdates();
+        cleanupQQManager();
 
         // 切换导航链接状态
         document.querySelectorAll('.sidebar nav li a, .nav-group-items li a').forEach(link => link.classList.remove('active'));
@@ -243,7 +244,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
             showMessage('全局配置已保存！部分更改可能需要重启服务生效。', 'success');
             loadBaseConfig();
-        } catch (error) { /* Error handled by apiFetch */ }
+        } catch (error) { console.warn('Failed to save base config:', error.message); }
     }
 
     /**
@@ -360,7 +361,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 navigateTo(firstLink.dataset.target);
                 firstLink.classList.add('active');
             }
-        } catch (error) { /* Error already shown by apiFetch */ }
+        } catch (error) { console.warn('Failed to load initial data:', error.message); }
     }
 
     // --- Event Listeners ---

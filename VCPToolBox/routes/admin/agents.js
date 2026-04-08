@@ -59,6 +59,10 @@ module.exports = function(options) {
             targetDir = path.join(AGENT_FILES_DIR, folderPath);
         }
         const filePath = path.join(targetDir, finalFileName);
+        const resolvedPath = path.resolve(filePath);
+        if (!resolvedPath.startsWith(path.resolve(AGENT_FILES_DIR))) {
+            return res.status(400).json({ error: 'Invalid file path' });
+        }
         try {
             await fs.mkdir(targetDir, { recursive: true });
             await fs.writeFile(filePath, '', { flag: 'wx' });
@@ -79,6 +83,10 @@ module.exports = function(options) {
                 return res.status(400).json({ error: 'Invalid file name.' });
             }
             const filePath = path.join(AGENT_FILES_DIR, decodedFileName.replace(/\//g, path.sep));
+            const resolvedPath = path.resolve(filePath);
+            if (!resolvedPath.startsWith(path.resolve(AGENT_FILES_DIR))) {
+                return res.status(400).json({ error: 'Invalid file path' });
+            }
             await fs.access(filePath);
             const content = await fs.readFile(filePath, 'utf-8');
             res.json({ content });
@@ -98,6 +106,10 @@ module.exports = function(options) {
             }
             if (typeof content !== 'string') return res.status(400).json({ error: 'Invalid request body.' });
             const filePath = path.join(AGENT_FILES_DIR, decodedFileName.replace(/\//g, path.sep));
+            const resolvedPath = path.resolve(filePath);
+            if (!resolvedPath.startsWith(path.resolve(AGENT_FILES_DIR))) {
+                return res.status(400).json({ error: 'Invalid file path' });
+            }
             await fs.mkdir(path.dirname(filePath), { recursive: true });
             await fs.writeFile(filePath, content, 'utf-8');
             res.json({ message: `Agent file '${decodedFileName}' saved successfully.` });

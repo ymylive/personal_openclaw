@@ -102,6 +102,19 @@ export function stopDashboardUpdates() {
 }
 
 /**
+ * 完整清理仪表盘资源（定时器、状态）。
+ * 在离开仪表盘页面时调用。
+ */
+export function cleanupDashboard() {
+    stopDashboardUpdates();
+    if (logoClickTimer) {
+        clearTimeout(logoClickTimer);
+        logoClickTimer = null;
+    }
+    logoClickCount = 0;
+}
+
+/**
  * 更新仪表盘上的所有数据。
  */
 async function updateDashboardData() {

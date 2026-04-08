@@ -5,6 +5,7 @@
 const WebSocket = require('ws');
 const http = require('http');
 const fs = require('fs');
+const fsPromises = require('fs').promises;
 const path = require('path');
 
 class QQBot {
@@ -24,16 +25,19 @@ class QQBot {
         this.apiKey = config.Key || '';
         this.apiPort = config.PORT || '6005';
 
-        // 加载 Agent 人设
-        this.agentPrompt = this._loadAgentPrompt();
+        // Agent 人设 (loaded async in start())
+        this.agentPrompt = '';
         this.toolPassword = '';
 
         this.ws = null;
         this.reconnectTimer = null;
+        this.cleanupTimer = null;
         this.cooldowns = new Map();
         this.rateCounts = new Map();
         this.recentMessages = new Map(); // chatId -> [{role,content}]
+        this.recentMessagesAccess = new Map(); // chatId -> last access timestamp
         this.pendingMedia = new Map();   // `${chatId}_${userId}` -> { imageUrls, files, timer, messageId, ... }
+        this.pendingMediaCreatedAt = new Map(); // key -> creation timestamp
         this.mediaWaitMs = 8000;         // 等待文字的超时（8秒）
     }
 
@@ -55,11 +59,11 @@ class QQBot {
         } catch (e) { return ''; }
     }
 
-    _loadAgentPrompt() {
+    async _loadAgentPrompt() {
         try {
             // 读取 agent_map.json 找到 agent 对应的文件名
             const mapPath = path.join(__dirname, 'agent_map.json');
-            const agentMap = JSON.parse(fs.readFileSync(mapPath, 'utf-8'));
+            const agentMap = JSON.parse(await fsPromises.readFile(mapPath, 'utf-8'));
             const fileName = agentMap[this.agentName];
             if (!fileName) {
                 console.warn(`[QQBot] Agent "${this.agentName}" not found in agent_map.json`);
@@ -67,7 +71,7 @@ class QQBot {
             }
             // 读取 Agent 文件
             const agentPath = path.join(__dirname, 'Agent', fileName);
-            let content = fs.readFileSync(agentPath, 'utf-8');
+            let content = await fsPromises.readFile(agentPath, 'utf-8');
             // 保留 VCP 模板变量 {{...}}，让 VCP 中间层自动展开
             console.log(`[QQBot] Loaded agent prompt: ${fileName} (${content.length} chars)`);
             return content;
@@ -78,26 +82,29 @@ class QQBot {
     }
 
     async start() {
+        this.agentPrompt = await this._loadAgentPrompt();
         this.toolPassword = await this._loadToolPassword();
         console.log(`[QQBot] Starting... WS: ${this.wsUrl}, Agent: ${this.agentName}`);
         console.log(`[QQBot] Allowed groups: ${this.allowedGroups.join(', ') || 'ALL'}`);
         this._connect();
         this._watchDreamLogs();
+        this._startCleanupTimer();
     }
 
     /**
      * 监听梦日志目录，有新的梦感悟时私发给管理员
      */
-    _watchDreamLogs() {
+    async _watchDreamLogs() {
         const dreamLogDir = path.join(__dirname, 'Plugin', 'AgentDream', 'dream_logs');
         try {
-            fs.mkdirSync(dreamLogDir, { recursive: true });
+            await fsPromises.mkdir(dreamLogDir, { recursive: true });
         } catch (e) { /* already exists */ }
 
         const seen = new Set();
         // 标记已有文件避免重复发
         try {
-            fs.readdirSync(dreamLogDir).forEach(f => seen.add(f));
+            const existingFiles = await fsPromises.readdir(dreamLogDir);
+            existingFiles.forEach(f => seen.add(f));
         } catch (e) { /* empty */ }
 
         fs.watch(dreamLogDir, (eventType, filename) => {
@@ -142,7 +149,7 @@ class QQBot {
 
     _connect() {
         if (this.ws) {
-            try { this.ws.close(); } catch (e) {}
+            try { this.ws.close(); } catch (e) { console.warn('[QQBot] Error closing old WS:', e.message); }
         }
 
         const url = this.accessToken
@@ -165,7 +172,7 @@ class QQBot {
                 const event = JSON.parse(data.toString());
                 this._handleEvent(event);
             } catch (e) {
-                // ignore parse errors
+                console.warn('[QQBot] Failed to parse WS message:', e.message);
             }
         });
 
@@ -241,9 +248,13 @@ class QQBot {
                         timer: setTimeout(() => {
                             // 超时没人@，丢弃缓冲（群里不主动识图）
                             this.pendingMedia.delete(pendingKey);
+                            this.pendingMediaCreatedAt.delete(pendingKey);
                             console.log(`[QQBot] Group media buffer expired for ${pendingKey}`);
                         }, 30000) // 群聊给30秒等@
                     });
+                    if (!this.pendingMediaCreatedAt.has(pendingKey)) {
+                        this.pendingMediaCreatedAt.set(pendingKey, Date.now());
+                    }
                     console.log(`[QQBot] Group media buffered for ${pendingKey}, waiting for @/keyword...`);
                 }
                 return;
@@ -279,6 +290,7 @@ class QQBot {
             const allFiles = [...(existing.files || []), ...files];
             const finalText = cleanText || existing.text || '';
             this.pendingMedia.delete(pendingKey);
+            this.pendingMediaCreatedAt.delete(pendingKey);
             console.log(`[QQBot] Merged: text="${finalText.substring(0,30)}" imgs=${allImages.length}`);
             this._callVCPChat(chatId, userId, finalText, messageId, nick, isPrivate, allImages, allFiles);
             return;
@@ -291,11 +303,13 @@ class QQBot {
                 messageId, nickname: nick, isPrivate, chatId, userId,
                 timer: setTimeout(() => {
                     this.pendingMedia.delete(pendingKey);
+                    this.pendingMediaCreatedAt.delete(pendingKey);
                     console.log(`[QQBot] Buffer timeout: text="${buf.text.substring(0,30)}" imgs=${buf.imageUrls.length}`);
                     this._callVCPChat(chatId, userId, buf.text, buf.messageId, buf.nickname, isPrivate, buf.imageUrls, buf.files);
                 }, this.mediaWaitMs)
             };
             this.pendingMedia.set(pendingKey, buf);
+            this.pendingMediaCreatedAt.set(pendingKey, Date.now());
             console.log(`[QQBot] Media buffered, waiting ${this.mediaWaitMs}ms...`);
             return;
         }
@@ -379,6 +393,8 @@ class QQBot {
         while (history.length > this.recentMsgLimit) {
             history.shift();
         }
+        // Track last access time for LRU cleanup
+        this.recentMessagesAccess.set(groupId, Date.now());
     }
 
     _checkRate(userId) {
@@ -419,6 +435,7 @@ class QQBot {
     async _callVCPChat(chatId, userId, text, messageId, nickname, isPrivate = false, imageUrls = [], files = []) {
         try {
             const history = this.recentMessages.get(chatId) || [];
+            this.recentMessagesAccess.set(chatId, Date.now());
             const isAdmin = this._isAdminUser(userId);
 
             // 非 admin 用户发送高危内容时直接拒绝
@@ -663,8 +680,84 @@ class QQBot {
         this.ws.send(JSON.stringify(msg));
     }
 
+    /**
+     * Periodic cleanup of unbounded Maps to prevent memory leaks.
+     * Runs every 10 minutes.
+     */
+    _startCleanupTimer() {
+        this.cleanupTimer = setInterval(() => {
+            const now = Date.now();
+            let removedCooldowns = 0;
+            let removedRateCounts = 0;
+            let removedChats = 0;
+
+            // Remove cooldowns older than 1 hour
+            for (const [key, timestamp] of this.cooldowns) {
+                if (now - timestamp > 60 * 60 * 1000) {
+                    this.cooldowns.delete(key);
+                    removedCooldowns++;
+                }
+            }
+
+            // Remove rateCounts older than 2 minutes
+            for (const [key, times] of this.rateCounts) {
+                const recent = times.filter(t => now - t < 120000);
+                if (recent.length === 0) {
+                    this.rateCounts.delete(key);
+                    removedRateCounts++;
+                } else {
+                    this.rateCounts.set(key, recent);
+                }
+            }
+
+            // Remove recentMessages not accessed in 2 hours
+            for (const [key, accessTime] of this.recentMessagesAccess) {
+                if (now - accessTime > 2 * 60 * 60 * 1000) {
+                    this.recentMessages.delete(key);
+                    this.recentMessagesAccess.delete(key);
+                    removedChats++;
+                }
+            }
+
+            // Hard cap: if recentMessages exceeds 500 keys, evict oldest-accessed
+            if (this.recentMessages.size > 500) {
+                const sorted = [...this.recentMessagesAccess.entries()]
+                    .sort((a, b) => a[1] - b[1]);
+                const toEvict = sorted.slice(0, this.recentMessages.size - 500);
+                for (const [key] of toEvict) {
+                    this.recentMessages.delete(key);
+                    this.recentMessagesAccess.delete(key);
+                    removedChats++;
+                }
+            }
+
+            // Hard cap: if pendingMedia exceeds 100 keys, evict oldest
+            if (this.pendingMedia.size > 100) {
+                const sorted = [...this.pendingMediaCreatedAt.entries()]
+                    .sort((a, b) => a[1] - b[1]);
+                const toEvict = sorted.slice(0, this.pendingMedia.size - 100);
+                for (const [key] of toEvict) {
+                    const entry = this.pendingMedia.get(key);
+                    if (entry?.timer) clearTimeout(entry.timer);
+                    this.pendingMedia.delete(key);
+                    this.pendingMediaCreatedAt.delete(key);
+                }
+            }
+
+            if (removedCooldowns > 0 || removedRateCounts > 0 || removedChats > 0) {
+                console.log(`[QQBot] Cleanup: removed ${removedCooldowns} cooldowns, ${removedRateCounts} rateCounts, ${removedChats} stale chats`);
+            }
+        }, 10 * 60 * 1000); // every 10 minutes
+
+        // Don't prevent process exit
+        if (this.cleanupTimer.unref) {
+            this.cleanupTimer.unref();
+        }
+    }
+
     stop() {
         console.log('[QQBot] Stopping...');
+        if (this.cleanupTimer) clearInterval(this.cleanupTimer);
         if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
         if (this.ws) {
             try { this.ws.close(); } catch (e) {}

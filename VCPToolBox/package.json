@@ -3,7 +3,8 @@
   "version": "7.1.2",
   "main": "Server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest --verbose",
+    "test:coverage": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage"
   },
   "keywords": [],
   "author": "",
@@ -58,5 +59,8 @@
     "uuid": "^9.0.0",
     "winston": "^3.17.0",
     "ws": "^8.17.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
   }
 }
