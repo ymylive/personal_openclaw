@@ -1307,6 +1307,34 @@ async function startServer() {
 
         if (DEBUG_MODE) console.log('[Server] WebSocketServer, PluginManager, and FileFetcherServer have been interconnected.');
     });
+
+    // QQ Bot 自动启动
+    try {
+        const QQBot = require('./qqBot');
+        const qqConfig = {
+            QQ_WS_URL: process.env.QQ_WS_URL,
+            QQ_ACCESS_TOKEN: process.env.QQ_ACCESS_TOKEN,
+            QQ_BOT_SELF_IDS: process.env.QQ_BOT_SELF_IDS,
+            QQ_AGENT_NAME: process.env.QQ_AGENT_NAME,
+            QQ_ALLOWED_GROUPS: process.env.QQ_ALLOWED_GROUPS,
+            QQ_ADMIN_USERS: process.env.QQ_ADMIN_USERS,
+            QQ_KEYWORD_TRIGGERS: process.env.QQ_KEYWORD_TRIGGERS,
+            QQ_COOLDOWN_SECONDS: process.env.QQ_COOLDOWN_SECONDS,
+            QQ_RATE_LIMIT_PER_MINUTE: process.env.QQ_RATE_LIMIT_PER_MINUTE,
+            QQ_MAX_MESSAGE_LENGTH: process.env.QQ_MAX_MESSAGE_LENGTH,
+            QQ_RECENT_MSG_LIMIT: process.env.QQ_RECENT_MSG_LIMIT,
+            Key: process.env.Key,
+            PORT: port
+        };
+        if (qqConfig.QQ_BOT_SELF_IDS) {
+            const qqBot = new QQBot(qqConfig);
+            qqBot.start();
+        } else {
+            console.log('[QQBot] QQ_BOT_SELF_IDS not set, QQ bot disabled.');
+        }
+    } catch (e) {
+        console.warn('[QQBot] Failed to start QQ bot:', e.message);
+    }
 }
 
 startServer().catch(err => {
