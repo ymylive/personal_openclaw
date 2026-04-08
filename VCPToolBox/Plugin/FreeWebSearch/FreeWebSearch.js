@@ -170,13 +170,21 @@ async function processRequest(request) {
     try {
         const results = await multiSearch(query, validEngines, maxResults);
         const { output, totalCount } = formatResults(results);
-        return { status: 'success', data: output, resultCount: totalCount };
+        // VCP Plugin.js 期望 {status:"success", result: 数据}
+        // ToolExecutor._formatResult 会从 result.content 数组提取文本
+        return {
+            status: 'success',
+            result: {
+                content: [{ type: 'text', text: output }],
+                resultCount: totalCount
+            }
+        };
     } catch (e) {
         return { status: 'error', error: `搜索失败: ${e.message}` };
     }
 }
 
-// VCP stdio 协议
+// VCP stdio 协议：读取一行 JSON 输入，处理后输出结果并退出
 const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', async (line) => {
     try {
@@ -186,4 +194,7 @@ rl.on('line', async (line) => {
     } catch (e) {
         process.stdout.write(JSON.stringify({ status: 'error', error: e.message }) + '\n');
     }
+    // 同步插件必须在输出后退出，否则 VCP 等不到 exit 事件
+    rl.close();
+    process.exit(0);
 });
