@@ -4721,3 +4721,234 @@ input:checked + .switch-slider:before {
     align-items: center;
     padding-top: 8px;
 }
+
+/* ===== 移动端适配：新增组件 ===== */
+@media (max-width: 768px) {
+
+    /* --- 顶部栏：按钮只显示图标 --- */
+    .restart-button, .theme-button {
+        padding: 6px 8px;
+        font-size: 0;
+        gap: 0;
+    }
+    .restart-button span, .theme-button span {
+        font-size: 18px !important;
+    }
+
+    /* --- 折叠导航分组 --- */
+    .nav-group-header {
+        padding: 8px 12px;
+    }
+
+    .nav-group-title {
+        font-size: 0.8em;
+    }
+
+    .nav-group-icon {
+        font-size: 18px !important;
+    }
+
+    .nav-group-chevron {
+        font-size: 18px !important;
+    }
+
+    .nav-group-items li a {
+        padding: 8px 12px !important;
+        font-size: 0.85em !important;
+        margin-left: 0 !important;
+    }
+
+    .nav-group-items li a .material-symbols-outlined {
+        font-size: 16px !important;
+    }
+
+    .nav-group-help-btn {
+        display: none;
+    }
+
+    /* --- 侧边栏底部帮助按钮 --- */
+    .sidebar-footer {
+        padding: 12px 15px;
+    }
+
+    .help-button {
+        padding: 8px;
+        font-size: 0.85em;
+    }
+
+    /* --- 帮助面板：全屏 --- */
+    .help-panel-content {
+        width: 100vw;
+    }
+
+    .help-panel-header {
+        padding: 16px 18px;
+    }
+
+    .help-panel-header h2 {
+        font-size: 1.1em;
+    }
+
+    .help-panel-body {
+        padding: 16px;
+    }
+
+    .help-category-header {
+        padding: 12px 14px;
+    }
+
+    .help-category-content {
+        padding: 0 14px;
+    }
+
+    .help-category.expanded .help-category-content {
+        padding: 12px 14px;
+    }
+
+    /* --- QQ Manager --- */
+    .qq-config-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .qq-status-banner {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .qq-config-card {
+        padding: 18px;
+    }
+
+    .qq-config-card h3 {
+        font-size: 0.95em;
+    }
+
+    /* --- 仪表盘卡片动画：移动端取消交错延迟 --- */
+    .status-card {
+        animation-delay: 0s !important;
+    }
+
+    .status-card:hover {
+        transform: none;
+    }
+
+    /* --- 进度圆环缩小 --- */
+    .progress-circle {
+        width: 90px;
+        height: 90px;
+    }
+
+    .progress-circle svg {
+        width: 90px;
+        height: 90px;
+    }
+
+    .progress-text {
+        font-size: 1.2em;
+    }
+
+    /* --- 新闻卡片 --- */
+    .news-card {
+        min-height: 180px;
+    }
+
+    .news-container {
+        height: 120px;
+    }
+
+    /* --- 修复移动端 sidebar 点击导航后自动关闭 --- */
+    /* 由 JS 处理，此处确保 transition 流畅 */
+    .sidebar {
+        transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* --- 移动端隐藏沉浸模式按钮 --- */
+    .exit-immersive-button {
+        top: 10px;
+        right: 10px;
+        padding: 8px 14px;
+        font-size: 0.85em;
+    }
+
+    /* --- 全局触摸优化 --- */
+    button, a, .nav-group-header, .help-category-header {
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    /* --- 确保 iframe section 不超出屏幕 --- */
+    .config-section iframe {
+        max-width: 100% !important;
+    }
+}
+
+/* ===== 超小屏幕适配 (< 480px) ===== */
+@media (max-width: 480px) {
+
+    .top-bar {
+        padding: 0 10px;
+    }
+
+    .server-title {
+        font-size: 0.95em;
+    }
+
+    .content {
+        padding: 12px 10px;
+    }
+
+    .config-section h2 {
+        font-size: 1.3em;
+        margin-bottom: 15px;
+    }
+
+    .status-card {
+        padding: 16px;
+        border-radius: 16px;
+    }
+
+    .form-group {
+        padding: 12px;
+        border-radius: 12px;
+    }
+
+    .vcp-animation-container {
+        height: 140px;
+        margin-bottom: 15px;
+    }
+
+    .weather-icon-large {
+        font-size: 48px !important;
+    }
+
+    #weather-temp {
+        font-size: 2.5em;
+    }
+
+    .weather-forecast {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+    }
+
+    .calendar-grid {
+        gap: 2px;
+    }
+
+    .calendar-day {
+        font-size: 0.8em;
+    }
+
+    /* 帮助面板更紧凑 */
+    .help-section h4 {
+        font-size: 0.85em;
+    }
+
+    .help-section p, .help-section li {
+        font-size: 0.8em;
+    }
+
+    .help-tip {
+        padding: 8px 10px;
+        font-size: 0.8em;
+    }
+}
