@@ -539,7 +539,8 @@ function setupEventListeners() {
  */
 async function loadConfig() {
     try {
-        fullConfigContent = await apiFetch('/admin_api/config/main', {}, false);
+        const data = await apiFetch('/admin_api/config/main', {}, false);
+        fullConfigContent = data.content || '';
         parsedEntries = parseEnvToList(fullConfigContent);
         renderConfigFields();
     } catch (error) {
@@ -664,9 +665,9 @@ async function handleSave(e) {
     if (saveBtn) saveBtn.disabled = true;
 
     try {
-        // 收集表单中所有 QQ 配置值
+        // 收集表单中所有 QQ 配置值（含 Embedding 配置）
         const formValues = {};
-        QQ_CONFIG_FIELDS.forEach(field => {
+        [...QQ_CONFIG_FIELDS, ...EMBEDDING_CONFIG_FIELDS].forEach(field => {
             const input = document.querySelector(`[data-config-key="${field.key}"]`);
             if (input) {
                 formValues[field.key] = input.value;
@@ -699,8 +700,8 @@ async function handleSave(e) {
             }
         });
 
-        // 追加配置文件中不存在但表单中有值的新 QQ 键
-        QQ_CONFIG_FIELDS.forEach(field => {
+        // 追加配置文件中不存在但表单中有值的新键（含 Embedding 配置）
+        [...QQ_CONFIG_FIELDS, ...EMBEDDING_CONFIG_FIELDS].forEach(field => {
             if (!writtenKeys.has(field.key) && formValues[field.key] !== undefined && formValues[field.key] !== '') {
                 newLines.push(`${field.key}=${formValues[field.key]}`);
             }
