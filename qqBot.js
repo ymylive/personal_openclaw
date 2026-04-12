@@ -26,11 +26,22 @@ class QQBot {
         this.apiPort = config.PORT || '6005';
 
         // 按群指定 Agent：格式 "群号1:AgentName1,群号2:AgentName2"
-        // 未指定的群使用默认 agentName
         this.groupAgentMap = {};
         (config.QQ_GROUP_AGENTS || '').split(',').filter(Boolean).forEach(pair => {
             const [gid, agent] = pair.split(':').map(s => s.trim());
             if (gid && agent) this.groupAgentMap[gid] = agent;
+        });
+
+        // 按群指定关键词：格式 "群号1:词1|词2,群号2:词3|词4"
+        // 未指定的群使用默认 keywords
+        this.groupKeywordsMap = {};
+        (config.QQ_GROUP_KEYWORDS || '').split(',').filter(Boolean).forEach(pair => {
+            const idx = pair.indexOf(':');
+            if (idx > 0) {
+                const gid = pair.substring(0, idx).trim();
+                const kws = pair.substring(idx + 1).split('|').map(s => s.trim()).filter(Boolean);
+                if (gid && kws.length) this.groupKeywordsMap[gid] = kws;
+            }
         });
 
         // Agent 人设 (loaded async in start())
@@ -272,7 +283,8 @@ class QQBot {
         let triggered = true;
         if (isGroup) {
             const isMentioned = this._isMentioned(event.message);
-            const isKeyword = hasText && this.keywords.some(kw => rawText.includes(kw));
+            const groupKws = this.groupKeywordsMap[String(event.group_id)] || this.keywords;
+            const isKeyword = hasText && groupKws.some(kw => rawText.toLowerCase().includes(kw.toLowerCase()));
             triggered = isMentioned || isKeyword;
             if (!triggered) {
                 // 未触发时：纯图片放入缓冲区等后续@消息合并
