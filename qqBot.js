@@ -833,13 +833,12 @@ class QQBot {
     }
 
     /**
-     * 全流程自动执行：Phase1(板块研判) → Phase2(个股精选) → 合并写文件 → 发送文件到群
+     * 全流程自动执行：Phase1(板块研判) → Phase2(个股精选) → 合并转发消息发送
      */
     async _runAStockFullAnalysis(chatId, userId, messageId, nick, isPrivate) {
-        console.log(`[QQBot][A股] 全流程启动: Phase1 → Phase2 → 文件发送`);
+        console.log(`[QQBot][A股] 全流程启动: Phase1 → Phase2 → 合并转发`);
         const today = new Date();
-        const dateStr = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
-        const timeStr = `${String(today.getHours()).padStart(2,'0')}${String(today.getMinutes()).padStart(2,'0')}`;
+        const lastTD = this._getLastTradingDate();
 
         // 发送进度提示
         this._sendGroupMsg(chatId, '正在执行A股全流程分析，请稍候...\n第一阶段：板块研判 + 市场情绪');
@@ -861,57 +860,101 @@ class QQBot {
         // Phase 2: 个股精选
         const phase2Result = await this._callVCPChat(chatId, userId, this._buildAStockPhase2Prompt(), messageId, nick, isPrivate, [], [], { isAStockAnalysis: true });
 
-        // 合并报告
-        const lastTD = this._getLastTradingDate();
-        const header = `A股短线交易研究报告\n生成时间：${today.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}\n前一交易日：${lastTD}\n${'='.repeat(50)}`;
+        console.log(`[QQBot][A股] Phase2 完成 (${(phase2Result || '').length}字)，开始发送`);
 
-        let fullReport = header + '\n\n';
-        fullReport += '【第一阶段：板块研判 + 市场情绪】\n\n';
-        fullReport += (phase1Result || '[分析未返回]').replace(/\[MSG_BREAK\]/g, '\n') + '\n\n';
-        fullReport += '='.repeat(50) + '\n\n';
-        fullReport += '【第二阶段：个股精选】\n\n';
-        fullReport += (phase2Result || '[选股未返回]').replace(/\[MSG_BREAK\]/g, '\n') + '\n\n';
-        fullReport += '='.repeat(50) + '\n';
-        fullReport += '免责声明：本报告由AI生成，仅供研究参考，不构成投资建议。投资有风险，决策需谨慎。\n';
+        // 清理 [MSG_BREAK]
+        const p1Clean = (phase1Result || '[分析未返回]').replace(/\[MSG_BREAK\]/g, '\n').trim();
+        const p2Clean = (phase2Result || '[选股未返回]').replace(/\[MSG_BREAK\]/g, '\n').trim();
 
-        // 写入文件
-        const fileName = `A股研报_${dateStr}_${timeStr}.txt`;
-        const filePath = path.join(__dirname, fileName);
+        // 用合并转发消息发送（一个卡片包含所有内容，不刷屏）
+        const botId = this.selfIds[0] || '10000';
+        const botName = this.agentName || '格兰利特';
+        const dateDisplay = today.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+
+        // 将长文本按4000字分段（QQ单条消息上限约4500字）
+        const splitText = (text, maxLen = 4000) => {
+            const parts = [];
+            for (let i = 0; i < text.length; i += maxLen) {
+                parts.push(text.substring(i, i + maxLen));
+            }
+            return parts.length > 0 ? parts : ['[空]'];
+        };
+
+        // 构建转发消息节点
+        const forwardNodes = [];
+
+        // 标题节点
+        forwardNodes.push({
+            type: 'node',
+            data: {
+                name: botName,
+                uin: botId,
+                content: [{ type: 'text', data: { text: `📊 A股短线交易研究报告\n生成时间：${dateDisplay}\n前一交易日：${lastTD}` } }]
+            }
+        });
+
+        // Phase1 内容（可能分多段）
+        forwardNodes.push({
+            type: 'node',
+            data: {
+                name: botName,
+                uin: botId,
+                content: [{ type: 'text', data: { text: '═══ 第一阶段：板块研判 + 市场情绪 ═══' } }]
+            }
+        });
+        for (const part of splitText(p1Clean)) {
+            forwardNodes.push({
+                type: 'node',
+                data: {
+                    name: botName,
+                    uin: botId,
+                    content: [{ type: 'text', data: { text: part } }]
+                }
+            });
+        }
+
+        // Phase2 内容
+        forwardNodes.push({
+            type: 'node',
+            data: {
+                name: botName,
+                uin: botId,
+                content: [{ type: 'text', data: { text: '═══ 第二阶段：个股精选 ═══' } }]
+            }
+        });
+        for (const part of splitText(p2Clean)) {
+            forwardNodes.push({
+                type: 'node',
+                data: {
+                    name: botName,
+                    uin: botId,
+                    content: [{ type: 'text', data: { text: part } }]
+                }
+            });
+        }
+
+        // 免责声明
+        forwardNodes.push({
+            type: 'node',
+            data: {
+                name: botName,
+                uin: botId,
+                content: [{ type: 'text', data: { text: '⚠️ 免责声明：本报告由AI生成，仅供研究参考，不构成投资建议。投资有风险，决策需谨慎。' } }]
+            }
+        });
+
+        // 发送合并转发消息
         try {
-            await fsPromises.writeFile(filePath, fullReport, 'utf-8');
-            console.log(`[QQBot][A股] 报告已写入: ${filePath} (${fullReport.length}字)`);
-
-            // 通过 OneBot11 发送文件到群
-            const sendAction = isPrivate ? 'send_private_msg' : 'send_group_msg';
-            const sendParams = isPrivate ? { user_id: parseInt(userId) } : { group_id: parseInt(chatId) };
-
-            // NapCat 发文件：用 file segment，路径格式 file:///absolute/path
-            this._sendRawMsg(sendAction, {
-                ...sendParams,
-                message: [
-                    { type: 'file', data: { file: `file://${filePath}`, name: fileName } }
-                ]
+            this._sendRawMsg('send_group_forward_msg', {
+                group_id: parseInt(chatId),
+                messages: forwardNodes
             });
-
-            // 同时发一条简短的摘要消息
-            await new Promise(r => setTimeout(r, 1500));
-            const summary = this._extractBriefSummary(phase1Result, phase2Result);
-            this._sendRawMsg(sendAction, {
-                ...sendParams,
-                message: [{ type: 'text', data: { text: summary } }]
-            });
-
-            // 延迟清理临时文件（30秒后）
-            setTimeout(async () => {
-                try { await fsPromises.unlink(filePath); } catch (e) { /* ignore */ }
-            }, 30000);
-
+            console.log(`[QQBot][A股] 合并转发消息已发送 (${forwardNodes.length}个节点)`);
         } catch (e) {
-            console.error(`[QQBot][A股] 文件写入/发送失败: ${e.message}`);
-            // 兜底：如果文件发送失败，降级为文本消息分段发送
-            this._sendGroupMsg(chatId, '文件发送失败，降级为文本输出...');
-            const chunks = fullReport.match(/[\s\S]{1,4000}/g) || [];
-            for (const chunk of chunks) {
+            console.error(`[QQBot][A股] 合并转发发送失败: ${e.message}，降级为分段文本`);
+            // 降级：分段发送
+            const allText = `📊 A股研究报告 (${dateDisplay})\n\n【第一阶段】\n${p1Clean}\n\n【第二阶段】\n${p2Clean}`;
+            for (const chunk of splitText(allText)) {
                 this._sendRawMsg('send_group_msg', {
                     group_id: parseInt(chatId),
                     message: [{ type: 'text', data: { text: chunk } }]
@@ -921,37 +964,6 @@ class QQBot {
         }
 
         console.log(`[QQBot][A股] 全流程完成`);
-    }
-
-    /**
-     * 从分析报告中提取简短摘要（发到群里的简版）
-     */
-    _extractBriefSummary(phase1, phase2) {
-        let summary = '📊 A股研究报告已生成，详见文件。\n\n';
-
-        // 从 Phase1 提取策略总结
-        if (phase1) {
-            const strategyMatch = phase1.match(/(?:四、|策略总结|今日策略)([\s\S]{0,500}?)(?=\n[一二三四五]、|\n={3,}|$)/);
-            if (strategyMatch) {
-                const brief = strategyMatch[1].trim().substring(0, 200);
-                summary += '【策略要点】' + brief + (strategyMatch[1].length > 200 ? '...' : '') + '\n\n';
-            }
-        }
-
-        // 从 Phase2 提取前3只股票名
-        if (phase2) {
-            const stockNames = [];
-            const stockMatches = phase2.matchAll(/(?:^|\n)\s*\d[.、]\s*[【]?(.{2,8})[】]?\s*[（(](\d{6})[)）]/gm);
-            for (const m of stockMatches) {
-                if (stockNames.length < 3) stockNames.push(`${m[1]}(${m[2]})`);
-            }
-            if (stockNames.length > 0) {
-                summary += '【重点关注】' + stockNames.join('、');
-            }
-        }
-
-        summary += '\n\n详细分析请查看文件。';
-        return summary;
     }
 
     /**
