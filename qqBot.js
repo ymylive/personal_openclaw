@@ -338,19 +338,12 @@ class QQBot {
             return;
         }
 
-        // ===== A股分析多Agent任务触发 =====
+        // ===== A股分析多Agent任务触发（全流程自动：Phase1 → Phase2）=====
         const aStockTrigger = cleanText.match(/格兰.{0,4}分析[aA]股|格兰.{0,4}分析(大盘|股市|行情)|跑第一(步|阶段)|第一阶段/);
-        const aStockPhase2 = cleanText.match(/跑第二(步|阶段)|第二阶段|选股/);
 
         if (aStockTrigger && this._isAdminUser(userId)) {
-            console.log(`[QQBot][A股] 触发第一阶段分析: ${cleanText}`);
-            this._callVCPChat(chatId, userId, this._buildAStockPhase1Prompt(), messageId, nick, isPrivate, [], [], { isAStockAnalysis: true });
-            return;
-        }
-
-        if (aStockPhase2 && this._isAdminUser(userId)) {
-            console.log(`[QQBot][A股] 触发第二阶段选股: ${cleanText}`);
-            this._callVCPChat(chatId, userId, this._buildAStockPhase2Prompt(), messageId, nick, isPrivate, [], [], { isAStockAnalysis: true });
+            console.log(`[QQBot][A股] 触发全流程分析: ${cleanText}`);
+            this._runAStockFullAnalysis(chatId, userId, messageId, nick, isPrivate);
             return;
         }
 
@@ -821,59 +814,103 @@ class QQBot {
     // ===== A股短线分析多Agent系统 =====
 
     /**
+     * 计算前一个交易日的日期（跳过周末）
+     */
+    _getLastTradingDate() {
+        const d = new Date();
+        const day = d.getDay();
+        // 周一→退3天到周五，周日→退2天，周六→退1天，其他→退1天
+        if (day === 1) d.setDate(d.getDate() - 3);
+        else if (day === 0) d.setDate(d.getDate() - 2);
+        else d.setDate(d.getDate() - 1);
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    }
+
+    /**
+     * 全流程自动执行：Phase1(板块研判) → 自动 → Phase2(个股精选)
+     */
+    async _runAStockFullAnalysis(chatId, userId, messageId, nick, isPrivate) {
+        console.log(`[QQBot][A股] 全流程启动: Phase1 → Phase2`);
+
+        // Phase 1: 板块研判 + 市场情绪
+        await this._callVCPChat(chatId, userId, this._buildAStockPhase1Prompt(), messageId, nick, isPrivate, [], [], { isAStockAnalysis: true });
+
+        // 间隔提示
+        console.log(`[QQBot][A股] Phase1 完成，3秒后自动进入 Phase2`);
+        await new Promise(r => setTimeout(r, 3000));
+
+        // Phase 2: 个股精选（基于 Phase1 的上下文自动接续）
+        this._sendGroupMsg(chatId, '📊 第一阶段研判完毕，正在自动进入第二阶段个股精选...');
+        await new Promise(r => setTimeout(r, 1500));
+
+        await this._callVCPChat(chatId, userId, this._buildAStockPhase2Prompt(), messageId, nick, isPrivate, [], [], { isAStockAnalysis: true });
+
+        console.log(`[QQBot][A股] 全流程完成`);
+    }
+
+    /**
      * 构建第一阶段 prompt：板块研判 + 市场情绪
-     * 格兰作为主Agent编排，通过AgentAssistant委派子Agent并行搜索
      */
     _buildAStockPhase1Prompt() {
         const today = new Date();
         const dateStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
         const weekday = ['周日','周一','周二','周三','周四','周五','周六'][today.getDay()];
+        const lastTD = this._getLastTradingDate();
 
         return `[A股短线交易研究 - 第一阶段：板块研判+市场情绪]
-今天是 ${dateStr} ${weekday}。请作为我的A股短线交易研究助手，严格执行以下分析任务。
+今天是 ${dateStr} ${weekday}，前一交易日是 ${lastTD}。请作为我的A股短线交易研究助手，严格执行以下分析任务。
 
-【强制要求】你必须先使用FreeWebSearch或其他搜索工具获取真实数据后再分析，禁止凭记忆回答！
-搜索步骤（按顺序执行）：
-1. 搜索「美股收盘 道琼斯 纳斯达克 标普500 ${dateStr}」
-2. 搜索「A股行情 涨停 跌停 涨跌家数 ${dateStr}」
-3. 搜索「A股热点板块 题材 龙头 连板 ${dateStr}」
-4. 搜索「北向资金 今日流向 ${dateStr}」
+【强制要求】必须先用搜索工具获取真实数据，禁止凭记忆回答！
 
-完成搜索后，你还可以调用AgentAssistant委派其他Agent补充数据。建议分工：
-- 委派Nova搜索「富时A50期指 美债收益率 美元指数 黄金原油」
-- 委派Hornet搜索「A股连板股 涨停板次日溢价 情绪周期」
-- 委派爱弥斯搜索「重大政策 地缘政治 宏观经济 最新」
+===== 搜索任务清单（按顺序执行，每项搜不到就换关键词重试一次）=====
 
-汇总所有数据后，按以下框架输出分析报告：
+第1轮搜索（你自己执行）：
+1. 搜索「site:finance.eastmoney.com 美股 道琼斯 纳斯达克 收盘 ${lastTD}」→ 搜不到换「美股三大指数收盘 ${lastTD} 涨跌」
+2. 搜索「site:finance.eastmoney.com A股 大盘 涨跌 成交额 ${lastTD}」→ 搜不到换「东方财富 A股行情 涨停跌停 ${lastTD}」
+3. 搜索「同花顺 热点板块 涨幅排名 ${lastTD}」→ 搜不到换「A股板块涨幅 龙头 连板 ${lastTD}」
+4. 搜索「东方财富 北向资金 净买入 ${lastTD}」→ 搜不到换「北向资金 沪深港通 净流入 ${lastTD}」
 
-===== 分析框架 =====
+第2轮搜索（补充缺失项，你自己执行或委派Agent）：
+5. 搜索「美国十年期国债收益率 美元指数 ${lastTD}」→ 搜不到换「US 10Y Treasury yield DXY ${lastTD}」
+6. 搜索「富时中国A50期指 夜盘 ${lastTD}」→ 搜不到换「FTSE A50 futures ${lastTD}」
+7. 搜索「恒生指数 恒生科技指数 收盘 ${lastTD}」→ 搜不到换「港股 恒指 恒科 ${lastTD}」
+8. 搜索「国际原油价格 黄金 伦铜 ${lastTD}」→ 搜不到换「WTI crude gold copper price ${lastTD}」
+9. 搜索「A股 连板 最高板 炸板率 涨停溢价 ${lastTD}」→ 搜不到换「连板股 晋级 断板 ${lastTD} 复盘」
+10. 搜索「两融余额 融资净买入 最新」→ 搜不到换「融资余额 变化 A股 本周」
+
+多Agent协作（可选，能加速）：
+- 委派Nova执行第5~8项搜索（外围数据）
+- 委派Hornet执行第9~10项搜索（A股微观数据）
+- 委派爱弥斯搜索「重大政策 突发事件 地缘 最新 ${dateStr}」
+
+===== 汇总后按以下框架输出 =====
 
 一、隔夜及外围市场
-1. 美股三大指数（道指、标普500、纳斯达克）前一交易日表现及驱动因素
-2. 美债收益率、美元指数变化及对A股资金面影响
-3. 富时A50期指夜盘表现
-4. 港股恒指/恒科指近期走势
-5. 大宗商品（原油、铜、黄金）重要异动
-6. 突发地缘政治或重大政策事件
+1. 美股三大指数（道指、标普500、纳斯达克）涨跌幅+收盘点位+驱动因素
+2. 美债10Y收益率、美元指数DXY变化及对A股资金面影响
+3. 富时A50期指夜盘涨跌
+4. 港股恒指/恒科指收盘情况
+5. 原油、黄金、铜 重要异动
+6. 突发地缘/政策事件
 
 二、A股市场情绪诊断
-1. 前一交易日概况：上证/深成指/创业板涨跌幅、成交额、涨跌家数比、涨停/跌停家数
-2. 当前情绪周期阶段（冰点→修复→升温→高潮→分歧→退潮），给出判断依据
-3. 连板高度（最高板几板？谁？）、连板梯队是否健康
+1. 前一交易日：上证/深成指/创业板涨跌幅+收盘点位+成交额（与前日对比）+涨跌家数+涨停跌停家数
+2. 情绪周期阶段（冰点→修复→升温→高潮→分歧→退潮）及判断依据
+3. 连板高度（最高板几板？谁？）、连板梯队健康度
 4. 涨停板次日溢价率趋势
-5. 北向资金近3日流向及重点方向
-6. 融资余额变化趋势
+5. 北向资金近3日净流向+重点买入方向
+6. 融资余额变化
 
 三、热点板块研判（3-5个板块）
-每个板块分析：驱动逻辑、持续性判断（启动/加速/高潮/分歧/退潮）、板块龙头和结构、今日操作建议
+每个板块：驱动逻辑 | 炒作阶段 | 龙头+结构 | 今日建议
 
 四、今日策略总结
-1. 进攻还是防守？仓位建议
-2. 重点关注的1-2个板块及原因
-3. 需要回避的方向
+1. 进攻/防守？仓位建议
+2. 重点关注1-2个板块
+3. 回避方向
 4. 核心风险点
 
-要求：基于最新真实数据分析，给出有逻辑支撑的明确判断。无法获取的数据明确说明，不要编造。`;
+要求：数据必须标注来源（搜索结果），搜不到的明确标注[未获取]，不要编造。`;
     }
 
     /**
@@ -882,37 +919,40 @@ class QQBot {
     _buildAStockPhase2Prompt() {
         const today = new Date();
         const dateStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+        const lastTD = this._getLastTradingDate();
 
         return `[A股短线交易研究 - 第二阶段：个股精选]
-今天是 ${dateStr}。基于刚才第一阶段的分析结论（特别是策略总结和重点板块），精选5只最值得关注的个股。
+今天是 ${dateStr}。基于上面第一阶段的板块研判和策略结论，精选5只最值得关注的短线个股。
 
-【强制要求】你必须先使用FreeWebSearch搜索工具获取候选股票的真实数据后再推荐，禁止凭记忆编造！
-搜索步骤：
-1. 搜索「${dateStr} A股 涨停 龙头股 板块」找到今日/昨日热点个股
-2. 对每个候选股搜索「股票名称 技术分析 支撑位 压力位」获取技术面数据
-3. 可以委派Hornet搜索个股技术面，委派Nova搜索个股最新消息
+【强制要求】必须先搜索获取候选股数据，禁止凭记忆编造！
 
-选股标准：
-- 市值优先50亿-500亿，流动性好弹性足
-- 技术面处于上升趋势或突破关键位置
-- 题材纯正，是板块正宗标的
-- 在板块中有市场辨识度（龙头/人气股优先）
-- 近期有明显量能配合，不选缩量滞涨
-- 避免已连续大涨严重透支的个股；优先低吸或首板/二板机会
-- 回避ST股、上市不满60天的次新股、被监管关注的个股
+===== 搜索步骤 =====
+1. 搜索「site:finance.eastmoney.com 涨停股 ${lastTD} 板块」→ 搜不到换「涨停复盘 龙头股 ${lastTD}」
+2. 根据第一阶段确定的重点板块，搜索「板块名称 龙头股 ${lastTD} 涨幅」
+3. 对候选个股逐只搜索「股票名称 技术分析 均线 成交量」或「股票代码 东方财富」获取技术面
+4. 委派Hornet搜索候选股技术面数据，委派Nova搜索候选股最新利好利空消息
 
-每只股票输出：
+===== 选股标准 =====
+- 市值优先50亿-500亿
+- 处于上升趋势或突破关键位
+- 板块正宗标的，有辨识度
+- 近期放量，不选缩量滞涨
+- 优先低吸/首板/二板机会，回避连续大涨透支的
+- 回避ST/次新(<60天)/被监管关注的
+
+===== 每只股票输出 =====
 1. 股票名称+代码
 2. 所属板块/题材
-3. 推荐逻辑（2-3句话）
-4. 关键技术位：支撑位、压力位（具体价格）
-5. 建议买入时机
-6. 止损位
-7. 预期持有周期
-8. 风险提示
+3. 推荐逻辑（2-3句）
+4. 关键技术位：支撑位+压力位（具体价格）
+5. 建议买入时机：竞价观察/开盘低吸/回踩确认/放量突破追入
+6. 止损位（具体价格或条件）
+7. 预期持有：1天/2-3天/视盘面
+8. 最大风险
 
-最后给出5只股票的优先级排序，并用一句话说明整体策略思路。
-要求：基于真实最新数据，不要编造价格和成交量。无法获取的信息明确说明。`;
+===== 最后 =====
+5只股票优先级排序（最看好排第一），一句话总结策略思路。
+数据必须来自搜索结果，搜不到标注[未获取]，不编造。`;
     }
 
     // ===== 自动水群系统 =====
