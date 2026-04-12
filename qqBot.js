@@ -344,13 +344,13 @@ class QQBot {
 
         if (aStockTrigger && this._isAdminUser(userId)) {
             console.log(`[QQBot][A股] 触发第一阶段分析: ${cleanText}`);
-            this._callVCPChat(chatId, userId, this._buildAStockPhase1Prompt(), messageId, nick, isPrivate, [], []);
+            this._callVCPChat(chatId, userId, this._buildAStockPhase1Prompt(), messageId, nick, isPrivate, [], [], { isAStockAnalysis: true });
             return;
         }
 
         if (aStockPhase2 && this._isAdminUser(userId)) {
             console.log(`[QQBot][A股] 触发第二阶段选股: ${cleanText}`);
-            this._callVCPChat(chatId, userId, this._buildAStockPhase2Prompt(), messageId, nick, isPrivate, [], []);
+            this._callVCPChat(chatId, userId, this._buildAStockPhase2Prompt(), messageId, nick, isPrivate, [], [], { isAStockAnalysis: true });
             return;
         }
 
@@ -473,7 +473,7 @@ class QQBot {
     }
 
     async _callVCPChat(chatId, userId, text, messageId, nickname, isPrivate = false, imageUrls = [], files = [], options = {}) {
-        const { isAutoChat = false } = options;
+        const { isAutoChat = false, isAStockAnalysis = false } = options;
         try {
             const history = this.recentMessages.get(chatId) || [];
             this.recentMessagesAccess.set(chatId, Date.now());
@@ -550,6 +550,9 @@ class QQBot {
                     multiContent.push({ type: 'text', text: `[文件: ${file.name}${file.url ? ' ' + file.url : ''}]` });
                 }
                 messages.push({ role: 'user', content: multiContent });
+            } else if (text && isAStockAnalysis) {
+                // A股分析模式：完整 prompt 必须显式添加为 user message，不能依赖 history
+                messages.push({ role: 'user', content: text });
             } else if (text) {
                 // 纯文本已在 history 最后一条，不重复添加
             }
@@ -557,7 +560,7 @@ class QQBot {
             const payload = JSON.stringify({
                 model: 'gpt-5.4',
                 messages: messages,
-                max_tokens: isAutoChat ? 200 : 1000,
+                max_tokens: isAStockAnalysis ? 8000 : (isAutoChat ? 200 : 1000),
                 stream: true,
                 maid: this.agentName
             });
@@ -829,13 +832,19 @@ class QQBot {
         return `[A股短线交易研究 - 第一阶段：板块研判+市场情绪]
 今天是 ${dateStr} ${weekday}。请作为我的A股短线交易研究助手，严格执行以下分析任务。
 
-重要：你是格兰利特，主Agent。请调用AgentAssistant委派其他Agent并行搜索以加速分析。建议分工：
-- 委派一个Agent搜索「美股三大指数 富时A50 美债收益率 今日」获取隔夜外围数据
-- 委派一个Agent搜索「A股 涨停 跌停 连板 ${dateStr}」获取昨日行情数据
-- 委派一个Agent搜索「A股 热点板块 题材 ${dateStr}」获取板块热点
-- 你自己综合所有信息完成最终研判
+【强制要求】你必须先使用FreeWebSearch或其他搜索工具获取真实数据后再分析，禁止凭记忆回答！
+搜索步骤（按顺序执行）：
+1. 搜索「美股收盘 道琼斯 纳斯达克 标普500 ${dateStr}」
+2. 搜索「A股行情 涨停 跌停 涨跌家数 ${dateStr}」
+3. 搜索「A股热点板块 题材 龙头 连板 ${dateStr}」
+4. 搜索「北向资金 今日流向 ${dateStr}」
 
-如果无法委派，你自己用搜索工具完成全部任务也可以。
+完成搜索后，你还可以调用AgentAssistant委派其他Agent补充数据。建议分工：
+- 委派Nova搜索「富时A50期指 美债收益率 美元指数 黄金原油」
+- 委派Hornet搜索「A股连板股 涨停板次日溢价 情绪周期」
+- 委派爱弥斯搜索「重大政策 地缘政治 宏观经济 最新」
+
+汇总所有数据后，按以下框架输出分析报告：
 
 ===== 分析框架 =====
 
@@ -877,7 +886,11 @@ class QQBot {
         return `[A股短线交易研究 - 第二阶段：个股精选]
 今天是 ${dateStr}。基于刚才第一阶段的分析结论（特别是策略总结和重点板块），精选5只最值得关注的个股。
 
-请调用AgentAssistant委派Agent搜索候选股票的技术面数据和最新消息，然后综合研判。
+【强制要求】你必须先使用FreeWebSearch搜索工具获取候选股票的真实数据后再推荐，禁止凭记忆编造！
+搜索步骤：
+1. 搜索「${dateStr} A股 涨停 龙头股 板块」找到今日/昨日热点个股
+2. 对每个候选股搜索「股票名称 技术分析 支撑位 压力位」获取技术面数据
+3. 可以委派Hornet搜索个股技术面，委派Nova搜索个股最新消息
 
 选股标准：
 - 市值优先50亿-500亿，流动性好弹性足
