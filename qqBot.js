@@ -338,6 +338,22 @@ class QQBot {
             return;
         }
 
+        // ===== A股分析多Agent任务触发 =====
+        const aStockTrigger = cleanText.match(/格兰.{0,4}分析[aA]股|格兰.{0,4}分析(大盘|股市|行情)|跑第一(步|阶段)|第一阶段/);
+        const aStockPhase2 = cleanText.match(/跑第二(步|阶段)|第二阶段|选股/);
+
+        if (aStockTrigger && this._isAdminUser(userId)) {
+            console.log(`[QQBot][A股] 触发第一阶段分析: ${cleanText}`);
+            this._callVCPChat(chatId, userId, this._buildAStockPhase1Prompt(), messageId, nick, isPrivate, [], []);
+            return;
+        }
+
+        if (aStockPhase2 && this._isAdminUser(userId)) {
+            console.log(`[QQBot][A股] 触发第二阶段选股: ${cleanText}`);
+            this._callVCPChat(chatId, userId, this._buildAStockPhase2Prompt(), messageId, nick, isPrivate, [], []);
+            return;
+        }
+
         // 纯文字 → 直接发送，不缓冲
         console.log(`[QQBot] [${isPrivate ? 'PM' : chatId}] ${nick}(${userId}): ${cleanText.substring(0, 80)}`);
         this._callVCPChat(chatId, userId, cleanText, messageId, nick, isPrivate, [], []);
@@ -797,6 +813,93 @@ class QQBot {
         if (this.cleanupTimer.unref) {
             this.cleanupTimer.unref();
         }
+    }
+
+    // ===== A股短线分析多Agent系统 =====
+
+    /**
+     * 构建第一阶段 prompt：板块研判 + 市场情绪
+     * 格兰作为主Agent编排，通过AgentAssistant委派子Agent并行搜索
+     */
+    _buildAStockPhase1Prompt() {
+        const today = new Date();
+        const dateStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+        const weekday = ['周日','周一','周二','周三','周四','周五','周六'][today.getDay()];
+
+        return `[A股短线交易研究 - 第一阶段：板块研判+市场情绪]
+今天是 ${dateStr} ${weekday}。请作为我的A股短线交易研究助手，严格执行以下分析任务。
+
+重要：你是格兰利特，主Agent。请调用AgentAssistant委派其他Agent并行搜索以加速分析。建议分工：
+- 委派一个Agent搜索「美股三大指数 富时A50 美债收益率 今日」获取隔夜外围数据
+- 委派一个Agent搜索「A股 涨停 跌停 连板 ${dateStr}」获取昨日行情数据
+- 委派一个Agent搜索「A股 热点板块 题材 ${dateStr}」获取板块热点
+- 你自己综合所有信息完成最终研判
+
+如果无法委派，你自己用搜索工具完成全部任务也可以。
+
+===== 分析框架 =====
+
+一、隔夜及外围市场
+1. 美股三大指数（道指、标普500、纳斯达克）前一交易日表现及驱动因素
+2. 美债收益率、美元指数变化及对A股资金面影响
+3. 富时A50期指夜盘表现
+4. 港股恒指/恒科指近期走势
+5. 大宗商品（原油、铜、黄金）重要异动
+6. 突发地缘政治或重大政策事件
+
+二、A股市场情绪诊断
+1. 前一交易日概况：上证/深成指/创业板涨跌幅、成交额、涨跌家数比、涨停/跌停家数
+2. 当前情绪周期阶段（冰点→修复→升温→高潮→分歧→退潮），给出判断依据
+3. 连板高度（最高板几板？谁？）、连板梯队是否健康
+4. 涨停板次日溢价率趋势
+5. 北向资金近3日流向及重点方向
+6. 融资余额变化趋势
+
+三、热点板块研判（3-5个板块）
+每个板块分析：驱动逻辑、持续性判断（启动/加速/高潮/分歧/退潮）、板块龙头和结构、今日操作建议
+
+四、今日策略总结
+1. 进攻还是防守？仓位建议
+2. 重点关注的1-2个板块及原因
+3. 需要回避的方向
+4. 核心风险点
+
+要求：基于最新真实数据分析，给出有逻辑支撑的明确判断。无法获取的数据明确说明，不要编造。`;
+    }
+
+    /**
+     * 构建第二阶段 prompt：个股精选
+     */
+    _buildAStockPhase2Prompt() {
+        const today = new Date();
+        const dateStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+
+        return `[A股短线交易研究 - 第二阶段：个股精选]
+今天是 ${dateStr}。基于刚才第一阶段的分析结论（特别是策略总结和重点板块），精选5只最值得关注的个股。
+
+请调用AgentAssistant委派Agent搜索候选股票的技术面数据和最新消息，然后综合研判。
+
+选股标准：
+- 市值优先50亿-500亿，流动性好弹性足
+- 技术面处于上升趋势或突破关键位置
+- 题材纯正，是板块正宗标的
+- 在板块中有市场辨识度（龙头/人气股优先）
+- 近期有明显量能配合，不选缩量滞涨
+- 避免已连续大涨严重透支的个股；优先低吸或首板/二板机会
+- 回避ST股、上市不满60天的次新股、被监管关注的个股
+
+每只股票输出：
+1. 股票名称+代码
+2. 所属板块/题材
+3. 推荐逻辑（2-3句话）
+4. 关键技术位：支撑位、压力位（具体价格）
+5. 建议买入时机
+6. 止损位
+7. 预期持有周期
+8. 风险提示
+
+最后给出5只股票的优先级排序，并用一句话说明整体策略思路。
+要求：基于真实最新数据，不要编造价格和成交量。无法获取的信息明确说明。`;
     }
 
     // ===== 自动水群系统 =====
