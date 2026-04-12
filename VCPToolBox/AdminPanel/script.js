@@ -371,6 +371,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (anchor) {
                 event.preventDefault();
                 navigateTo(anchor.dataset.target);
+                // 支持 data-scroll-to：导航后滚动到指定元素
+                const scrollTo = anchor.dataset.scrollTo;
+                if (scrollTo) {
+                    setTimeout(() => {
+                        const el = document.getElementById(scrollTo);
+                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 300);
+                }
             }
         });
     }

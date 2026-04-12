@@ -456,14 +456,15 @@ class QQBot {
         return QQBot.DANGEROUS_PATTERNS.some(p => lower.includes(p.toLowerCase()));
     }
 
-    async _callVCPChat(chatId, userId, text, messageId, nickname, isPrivate = false, imageUrls = [], files = []) {
+    async _callVCPChat(chatId, userId, text, messageId, nickname, isPrivate = false, imageUrls = [], files = [], options = {}) {
+        const { isAutoChat = false } = options;
         try {
             const history = this.recentMessages.get(chatId) || [];
             this.recentMessagesAccess.set(chatId, Date.now());
             const isAdmin = this._isAdminUser(userId);
 
-            // 非 admin 用户发送高危内容时直接拒绝
-            if (!isAdmin && this._containsDangerousContent(text)) {
+            // 非 admin 用户发送高危内容时直接拒绝（水群模式跳过）
+            if (!isAutoChat && !isAdmin && this._containsDangerousContent(text)) {
                 console.log(`[QQBot] BLOCKED dangerous request from non-admin ${userId}: ${text.substring(0, 60)}`);
                 const rejectMsg = '哈？这种操作可不能随便让你搞，找管理员去。';
                 isPrivate ? this._sendPrivateMsg(userId, rejectMsg) : this._sendGroupMsg(chatId, rejectMsg, messageId);
@@ -475,9 +476,20 @@ class QQBot {
             const roleHint = isProtagonist
                 ? `这是你最重要的搭档（相当于主角亚戈），用你对最亲近伙伴的方式回应。`
                 : `这是一个普通朋友/认识的人，保持友善但不会像对搭档那样亲密和特别。`;
-            const envHint = isPrivate
+            let envHint = isPrivate
                 ? `[当前环境] QQ私聊。发消息的用户: ${nickname}(${userId})。${roleHint}`
                 : `[当前环境] QQ群聊。发消息的用户: ${nickname}(${userId})。群号: ${chatId}。${roleHint}`;
+
+            // 水群模式：追加行为约束
+            if (isAutoChat) {
+                envHint += `\n[水群模式] 你正在以群友身份自然地参与群聊，不是在回应别人的提问。注意：
+- 说话简短随意，1-2句话，偶尔就一个词或表情
+- 不要长篇大论、不要分点列举、不要markdown
+- 用网络用语和口语化表达，像真人打字
+- 可以吐槽、玩梗、表达情绪，不要总是附和
+- 不要自我介绍或解释身份
+- 禁止使用动作描写（*动作*格式）`;
+            }
 
             // 权限控制指令：非 admin 禁止调用高危工具（天气、搜索等安全工具不限制）
             const permissionHint = isAdmin
@@ -529,7 +541,7 @@ class QQBot {
             const payload = JSON.stringify({
                 model: 'gpt-5.4',
                 messages: messages,
-                max_tokens: 1000,
+                max_tokens: isAutoChat ? 200 : 1000,
                 stream: true,
                 maid: this.agentName
             });
@@ -591,9 +603,17 @@ class QQBot {
                 const sendAction = isPrivate ? 'send_private_msg' : 'send_group_msg';
                 const sendParams = isPrivate ? { user_id: parseInt(userId) } : { group_id: parseInt(chatId) };
 
+                // 水群模式下截短回复
+                if (isAutoChat && reply.length > 100) {
+                    const cutIdx = reply.substring(0, 100).search(/[。！？!?\n]/);
+                    reply = cutIdx > 10 ? reply.substring(0, cutIdx + 1) : reply.substring(0, 80);
+                    reply = reply.trim();
+                }
+
                 for (let i = 0; i < chunks.length; i++) {
                     const segments = [];
-                    if (i === 0 && !isPrivate) {
+                    // 水群模式不引用消息（真人不会每次都回复引用）
+                    if (i === 0 && !isPrivate && !isAutoChat) {
                         segments.push({ type: 'reply', data: { id: String(messageId) } });
                     }
                     segments.push({ type: 'text', data: { text: chunks[i] } });
@@ -960,121 +980,109 @@ class QQBot {
     }
 
     /**
-     * 执行自动水群：构造特殊 prompt 让 AI 像真人一样插嘴
+     * 执行自动水群：先 AI 研判上下文是否适合插嘴，再走 VCP 完整思维链生成回复
      */
     async _doAutoChat(groupId, triggerText, triggerNickname, triggerMsgId) {
         try {
-            const history = this.recentMessages.get(groupId) || [];
-            this.recentMessagesAccess.set(groupId, Date.now());
             const topicBuffer = this._autoChatTopicBuffer.get(groupId) || [];
+            const history = this.recentMessages.get(groupId) || [];
 
-            // 构造水群专用 system prompt
-            const autoChatSystemPrompt = `你现在是QQ群里的一个普通群友，正在随意聊天水群。
-
-重要规则——你必须严格遵守，否则会被识破是机器人：
-1. 说话简短随意，一般1-2句话，偶尔蹦一个词或表情就行
-2. 绝对不要用"作为AI"、"我是AI"之类的说法
-3. 不要长篇大论，不要分点列举，不要用markdown格式
-4. 可以用网络用语、缩写、错别字（偶尔），像真人打字一样
-5. 不要每次都接话，有时候只是吐槽、玩梗、表达情绪
-6. 语气自然口语化——"卧槽"、"绝了"、"真假"、"6"、"啊这"、"确实"、"蚌"这种都行
-7. 不要主动自我介绍或解释自己的身份
-8. 可以偶尔表达不同意见或轻微吐槽，不要总是附和
-9. 不要引用/回复消息，直接说话就行
-10. 绝对禁止使用动作描写（*动作*格式）和颜文字`;
-
-            const messages = [];
+            // ===== 第一步：AI 研判——当前上下文是否适合插嘴 =====
+            const recentContext = topicBuffer.slice(-8).join('\n');
+            const judgeMessages = [];
             if (this.agentPrompt) {
-                messages.push({ role: 'system', content: this.agentPrompt });
+                judgeMessages.push({ role: 'system', content: this.agentPrompt });
             }
-            messages.push({ role: 'system', content: autoChatSystemPrompt });
+            judgeMessages.push({
+                role: 'system',
+                content: `你是QQ群里的一个群友。现在需要你判断：看到下面这些群聊消息后，你作为群友自然地插嘴说话是否合适？
 
-            // 给最近的群聊上下文
-            const recentCtx = history.slice(-8);
-            messages.push(...recentCtx);
+判断标准：
+- 如果大家在激烈讨论/争论某件事，你可以加入
+- 如果有人说了搞笑/离谱的事，你可以吐槽
+- 如果有人问了一个你恰好知道的问题，可以回答
+- 如果话题和你的兴趣/专业相关，可以自然聊几句
+- 如果大家在闲聊八卦、分享日常，你可以搭话
+- 如果是严肃私密话题（比如有人在诉苦/求安慰/聊隐私），不要插嘴
+- 如果群里很冷清就一两条消息，不要强行找话题
+- 如果上下文含敏感/政治/争议话题，不要参与
 
-            // 当前消息作为用户消息，但伪装成群聊上下文
-            messages.push({
+你只需要回答一个JSON，不要说任何其他内容：
+{"speak": true/false, "reason": "简短原因"}
+
+如果 speak=true，reason 中简述你打算聊什么方向（不需要写完整回复）。`
+            });
+            // 给历史上下文
+            judgeMessages.push(...history.slice(-6));
+            judgeMessages.push({
                 role: 'user',
-                content: `[群聊上下文，你是群友之一，刚看到这些消息觉得想说点什么。直接说你想说的话就行，不需要加任何前缀。记住：简短、自然、像真人。]\n\n最近的消息:\n${topicBuffer.slice(-5).join('\n')}`
+                content: `最近的群聊消息:\n${recentContext}`
             });
 
-            const payload = JSON.stringify({
+            const judgePayload = JSON.stringify({
                 model: 'gpt-5.4',
-                messages: messages,
-                max_tokens: 150,  // 限制短回复
+                messages: judgeMessages,
+                max_tokens: 100,
                 stream: true,
-                temperature: 0.95, // 更随机自然
                 maid: this.agentName
             });
 
-            const streamData = await this._httpPostStream(
+            const judgeStream = await this._httpPostStream(
                 `http://127.0.0.1:${this.apiPort}/v1/chat/completions`,
-                payload,
+                judgePayload,
                 { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}` }
             );
 
-            let reply = '';
-            const lines = streamData.split('\n');
-            for (const line of lines) {
+            let judgeReply = '';
+            for (const line of judgeStream.split('\n')) {
                 if (!line.startsWith('data: ') || line.includes('[DONE]')) continue;
                 try {
                     const chunk = JSON.parse(line.slice(6));
                     const delta = chunk.choices?.[0]?.delta?.content;
-                    if (delta) reply += delta;
+                    if (delta) judgeReply += delta;
                 } catch (e) { /* skip */ }
             }
-            reply = reply.trim();
+            judgeReply = judgeReply.trim();
 
-            if (!reply) return;
-
-            // 清理：去掉所有不像真人的东西
-            reply = reply.replace(/<<<\[TOOL_REQUEST\]>>>[\s\S]*?<<<\[END_TOOL_REQUEST\]>>>/g, '');
-            reply = reply.replace(/<<<\[TOOL_REQUEST\]>>>[\s\S]*/g, '');
-            reply = reply.replace(/(?:maid|tool_name|tool_password|query|engines|max_results|language):「始」[^「]*「末」[,\s]*/g, '');
-            reply = reply.replace(/\*[^*]+\*/g, '');
-            reply = reply.replace(/\[@!?[^\]]*\]/g, '');
-            reply = reply.replace(/<[^>]+>/g, '');
-            reply = reply.replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').replace(/\n{3,}/g, '\n\n');
-
-            // 去掉前缀（AI 有时会加 "[群友]:" 之类的前缀）
-            reply = reply.replace(/^\[?[^\]]*\]?\s*[:：]\s*/, '');
-            // 去掉引号包裹
-            reply = reply.replace(/^["「『](.+)["」』]$/, '$1');
-
-            // 如果回复太长（超过100字），截断到最近的句号/问号处
-            if (reply.length > 100) {
-                const cutIdx = reply.substring(0, 100).search(/[。！？!?\n]/);
-                if (cutIdx > 10) {
-                    reply = reply.substring(0, cutIdx + 1);
-                } else {
-                    reply = reply.substring(0, 80);
+            // 解析研判结果
+            let shouldSpeak = false;
+            let judgeReason = '';
+            try {
+                // 容忍 AI 输出前后有额外文字，提取 JSON 部分
+                const jsonMatch = judgeReply.match(/\{[\s\S]*?\}/);
+                if (jsonMatch) {
+                    const parsed = JSON.parse(jsonMatch[0]);
+                    shouldSpeak = parsed.speak === true;
+                    judgeReason = parsed.reason || '';
                 }
+            } catch (e) {
+                // JSON 解析失败，用关键词兜底
+                shouldSpeak = /true|可以|适合|聊/.test(judgeReply) && !/false|不适合|不要/.test(judgeReply);
             }
 
-            reply = reply.trim();
-            if (!reply) return;
-
-            console.log(`[QQBot][水群] -> [${groupId}]: ${reply}`);
-
-            // 保存到上下文
-            const hist = this.recentMessages.get(groupId) || [];
-            hist.push({ role: 'assistant', content: reply });
-
-            // 发送消息——不引用任何消息，直接说话（真人不会每次都回复引用）
-            // 按 [MSG_BREAK] 拆分
-            const chunks = reply.split(/\[MSG_BREAK\]/g).map(s => s.trim()).filter(Boolean);
-            for (let i = 0; i < chunks.length; i++) {
-                this._sendRawMsg('send_group_msg', {
-                    group_id: parseInt(groupId),
-                    message: [{ type: 'text', data: { text: chunks[i] } }]
-                });
-                if (i < chunks.length - 1) {
-                    const nextLen = chunks[i + 1]?.length || 0;
-                    const delay = Math.min(300 + nextLen * 40, 2000) + Math.random() * 800;
-                    await new Promise(r => setTimeout(r, delay));
-                }
+            if (!shouldSpeak) {
+                console.log(`[QQBot][水群] 研判不适合插嘴: ${judgeReason || judgeReply.substring(0, 60)}`);
+                return;
             }
+
+            console.log(`[QQBot][水群] 研判通过: ${judgeReason}`);
+
+            // ===== 第二步：走 VCP 完整思维链，以群友身份生成回复 =====
+            // 构造一个水群上下文指令作为 user message，走 _callVCPChat 的完整管线
+            const autoChatPrompt = `[群聊上下文 - 水群模式] 你是群友之一，刚看到这些消息觉得想说点什么。研判方向: ${judgeReason}。直接说你想说的话就行，不需要加任何前缀、不需要引用消息。简短自然像真人。\n\n最近的消息:\n${recentContext}`;
+
+            // 把水群指令先加入 history 作为上下文（临时，不污染）
+            await this._callVCPChat(
+                groupId,
+                this.selfIds[0] || '0',   // userId 用 bot 自己（不触发权限检查）
+                autoChatPrompt,
+                triggerMsgId,
+                this.agentName,            // nickname 用 agent 名
+                false,                     // isPrivate
+                [],                        // imageUrls
+                [],                        // files
+                { isAutoChat: true }       // 水群标记
+            );
         } catch (e) {
             console.error(`[QQBot][水群] Error: ${e.message}`);
         } finally {
