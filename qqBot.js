@@ -29,6 +29,25 @@ class QQBot {
         this.agentPrompt = '';
         this.toolPassword = '';
 
+        // ===== 自动水群配置 =====
+        this.autoChat = config.QQ_AUTO_CHAT !== 'false';                        // 总开关，默认开启
+        this.autoChatGroups = (config.QQ_AUTO_CHAT_GROUPS || '').split(',').filter(Boolean); // 水群白名单（空=跟随 allowedGroups）
+        this.autoChatBaseProb = parseFloat(config.QQ_AUTO_CHAT_BASE_PROB) || 0.03;   // 基础触发概率 3%
+        this.autoChatBurstProb = parseFloat(config.QQ_AUTO_CHAT_BURST_PROB) || 0.25; // 活跃话题触发概率 25%
+        this.autoChatCooldownMin = parseInt(config.QQ_AUTO_CHAT_COOLDOWN_MIN) || 120; // 同群水群最小间隔（秒）
+        this.autoChatCooldownMax = parseInt(config.QQ_AUTO_CHAT_COOLDOWN_MAX) || 600; // 同群水群最大间隔（秒）
+        this.autoChatActiveHoursStart = parseInt(config.QQ_AUTO_CHAT_HOURS_START) || 8;  // 活跃时段起始
+        this.autoChatActiveHoursEnd = parseInt(config.QQ_AUTO_CHAT_HOURS_END) || 1;     // 活跃时段结束（次日1点）
+        this.autoChatMsgThreshold = parseInt(config.QQ_AUTO_CHAT_MSG_THRESHOLD) || 5;   // 连续N条消息后才可能触发
+        this.autoChatMaxDaily = parseInt(config.QQ_AUTO_CHAT_MAX_DAILY) || 30;           // 每日每群上限
+
+        // 水群运行时状态
+        this._autoChatLastTime = new Map();      // groupId -> timestamp 上次水群时间
+        this._autoChatMsgCount = new Map();       // groupId -> count 自上次触发后的消息计数
+        this._autoChatDailyCount = new Map();     // groupId -> { date, count }
+        this._autoChatPending = new Set();         // 正在水群中的群（防并发）
+        this._autoChatTopicBuffer = new Map();     // groupId -> [最近几条消息文本] 用于话题检测
+
         this.ws = null;
         this.reconnectTimer = null;
         this.cleanupTimer = null;
@@ -256,6 +275,11 @@ class QQBot {
                         this.pendingMediaCreatedAt.set(pendingKey, Date.now());
                     }
                     console.log(`[QQBot] Group media buffered for ${pendingKey}, waiting for @/keyword...`);
+                }
+
+                // ===== 自动水群判断 =====
+                if (hasText) {
+                    this._evaluateAutoChat(chatId, userId, rawText, event.sender?.nickname || '', messageId);
                 }
                 return;
             }
@@ -752,6 +776,309 @@ class QQBot {
         // Don't prevent process exit
         if (this.cleanupTimer.unref) {
             this.cleanupTimer.unref();
+        }
+    }
+
+    // ===== 自动水群系统 =====
+
+    /**
+     * 判断是否在活跃时段内
+     */
+    _isActiveHour() {
+        const hour = new Date().getHours();
+        if (this.autoChatActiveHoursEnd > this.autoChatActiveHoursStart) {
+            // 同日：如 8~23
+            return hour >= this.autoChatActiveHoursStart && hour < this.autoChatActiveHoursEnd;
+        } else {
+            // 跨日：如 8~次日1 → 8~24 || 0~1
+            return hour >= this.autoChatActiveHoursStart || hour < this.autoChatActiveHoursEnd;
+        }
+    }
+
+    /**
+     * 检查该群今日水群次数
+     */
+    _checkDailyLimit(groupId) {
+        const today = new Date().toDateString();
+        const rec = this._autoChatDailyCount.get(groupId);
+        if (!rec || rec.date !== today) {
+            this._autoChatDailyCount.set(groupId, { date: today, count: 0 });
+            return true;
+        }
+        return rec.count < this.autoChatMaxDaily;
+    }
+
+    _incrementDailyCount(groupId) {
+        const today = new Date().toDateString();
+        const rec = this._autoChatDailyCount.get(groupId) || { date: today, count: 0 };
+        if (rec.date !== today) {
+            rec.date = today;
+            rec.count = 0;
+        }
+        rec.count++;
+        this._autoChatDailyCount.set(groupId, rec);
+    }
+
+    /**
+     * 检测话题热度——最近几条消息是否在讨论同一个话题 / 有趣的内容
+     */
+    _detectTopicHeat(groupId, newText) {
+        if (!this._autoChatTopicBuffer.has(groupId)) {
+            this._autoChatTopicBuffer.set(groupId, []);
+        }
+        const buffer = this._autoChatTopicBuffer.get(groupId);
+        buffer.push(newText);
+        // 只保留最近8条
+        while (buffer.length > 8) buffer.shift();
+
+        if (buffer.length < 3) return { hot: false, score: 0 };
+
+        // 热度信号检测
+        let score = 0;
+        const recent = buffer.slice(-5);
+        const allText = recent.join(' ');
+
+        // 1. 多人快速发言（buffer 积累快说明活跃）
+        if (recent.length >= 4) score += 0.15;
+
+        // 2. 话题关键词重叠——有人在讨论同一件事
+        const words = new Set();
+        let overlap = 0;
+        for (const msg of recent) {
+            const segs = msg.replace(/[，。！？、\s]+/g, ' ').split(' ').filter(w => w.length >= 2);
+            for (const w of segs) {
+                if (words.has(w)) overlap++;
+                words.add(w);
+            }
+        }
+        if (overlap >= 3) score += 0.2;
+        if (overlap >= 6) score += 0.15;
+
+        // 3. 情绪类关键词——有趣/搞笑/争论/求助
+        const emotionPatterns = [
+            /哈哈|笑死|绝了|离谱|草|6{2,}|牛|卧槽|我[靠草去]|nb|666|hhh|hh|xswl|awsl/i,
+            /\?{2,}|！{2,}|真的假的|不会吧|什么鬼|啊这/,
+            /怎么办|求助|有没有人|谁知道|急|在线等|救/,
+            /有人|来个|有无|求推荐|推荐一下|安利/,
+        ];
+        for (const pat of emotionPatterns) {
+            if (pat.test(allText)) score += 0.1;
+        }
+
+        // 4. 提到了 bot 相关的话题（但没有@）
+        const botTopics = /ai|机器人|bot|chatgpt|gpt|claude|人工智能|大模型|智能/i;
+        if (botTopics.test(allText)) score += 0.2;
+
+        // 5. 最新这条消息本身是个问句或感叹——更适合插嘴
+        if (/[？?]/.test(newText)) score += 0.1;
+        if (/[！!]{2,}/.test(newText)) score += 0.05;
+
+        return { hot: score >= 0.3, score };
+    }
+
+    /**
+     * 核心：评估是否自动水群
+     */
+    _evaluateAutoChat(chatId, userId, text, nickname, messageId) {
+        if (!this.autoChat) return;
+
+        const groupId = chatId;
+
+        // 白名单检查
+        const allowedList = this.autoChatGroups.length > 0 ? this.autoChatGroups : this.allowedGroups;
+        if (allowedList.length > 0 && !allowedList.includes(groupId)) return;
+
+        // 时段检查
+        if (!this._isActiveHour()) return;
+
+        // 每日上限
+        if (!this._checkDailyLimit(groupId)) return;
+
+        // 正在处理中
+        if (this._autoChatPending.has(groupId)) return;
+
+        // 冷却检查（动态冷却：随机在 min~max 之间）
+        const now = Date.now();
+        const lastTime = this._autoChatLastTime.get(groupId) || 0;
+        const cooldownMs = (this.autoChatCooldownMin + Math.random() * (this.autoChatCooldownMax - this.autoChatCooldownMin)) * 1000;
+        if (now - lastTime < cooldownMs) {
+            // 在冷却中，只累计消息
+            this._autoChatMsgCount.set(groupId, (this._autoChatMsgCount.get(groupId) || 0) + 1);
+            this._detectTopicHeat(groupId, text); // 持续追踪话题
+            return;
+        }
+
+        // 消息计数累积
+        const msgCount = (this._autoChatMsgCount.get(groupId) || 0) + 1;
+        this._autoChatMsgCount.set(groupId, msgCount);
+
+        // 消息数不够，不触发
+        if (msgCount < this.autoChatMsgThreshold) {
+            this._detectTopicHeat(groupId, text);
+            return;
+        }
+
+        // 话题热度分析
+        const { hot, score } = this._detectTopicHeat(groupId, text);
+
+        // 计算最终触发概率
+        let prob = this.autoChatBaseProb;
+
+        // 话题热 → 提升概率
+        if (hot) prob = Math.max(prob, this.autoChatBurstProb);
+
+        // 消息积累越多概率越高（每多5条 +5%）
+        prob += Math.floor(msgCount / 5) * 0.05;
+
+        // 深夜时段（23-1点）概率减半
+        const hour = new Date().getHours();
+        if (hour >= 23 || hour < 1) prob *= 0.5;
+
+        // 概率上限 60%
+        prob = Math.min(prob, 0.6);
+
+        // 掷骰子
+        const roll = Math.random();
+        if (roll > prob) return;
+
+        console.log(`[QQBot][水群] 触发! group=${groupId} prob=${(prob*100).toFixed(1)}% roll=${(roll*100).toFixed(1)}% heat=${score.toFixed(2)} msgCount=${msgCount}`);
+
+        // 标记状态
+        this._autoChatPending.add(groupId);
+        this._autoChatLastTime.set(groupId, now);
+        this._autoChatMsgCount.set(groupId, 0);
+        this._incrementDailyCount(groupId);
+
+        // 模拟真人：延迟一段时间再发（1.5~8秒，短消息快回复，话题热也快）
+        const baseDelay = hot ? 1500 : 3000;
+        const randomDelay = Math.random() * 5000;
+        const typingDelay = baseDelay + randomDelay;
+
+        setTimeout(() => {
+            this._doAutoChat(groupId, text, nickname, messageId);
+        }, typingDelay);
+    }
+
+    /**
+     * 执行自动水群：构造特殊 prompt 让 AI 像真人一样插嘴
+     */
+    async _doAutoChat(groupId, triggerText, triggerNickname, triggerMsgId) {
+        try {
+            const history = this.recentMessages.get(groupId) || [];
+            this.recentMessagesAccess.set(groupId, Date.now());
+            const topicBuffer = this._autoChatTopicBuffer.get(groupId) || [];
+
+            // 构造水群专用 system prompt
+            const autoChatSystemPrompt = `你现在是QQ群里的一个普通群友，正在随意聊天水群。
+
+重要规则——你必须严格遵守，否则会被识破是机器人：
+1. 说话简短随意，一般1-2句话，偶尔蹦一个词或表情就行
+2. 绝对不要用"作为AI"、"我是AI"之类的说法
+3. 不要长篇大论，不要分点列举，不要用markdown格式
+4. 可以用网络用语、缩写、错别字（偶尔），像真人打字一样
+5. 不要每次都接话，有时候只是吐槽、玩梗、表达情绪
+6. 语气自然口语化——"卧槽"、"绝了"、"真假"、"6"、"啊这"、"确实"、"蚌"这种都行
+7. 不要主动自我介绍或解释自己的身份
+8. 可以偶尔表达不同意见或轻微吐槽，不要总是附和
+9. 不要引用/回复消息，直接说话就行
+10. 绝对禁止使用动作描写（*动作*格式）和颜文字`;
+
+            const messages = [];
+            if (this.agentPrompt) {
+                messages.push({ role: 'system', content: this.agentPrompt });
+            }
+            messages.push({ role: 'system', content: autoChatSystemPrompt });
+
+            // 给最近的群聊上下文
+            const recentCtx = history.slice(-8);
+            messages.push(...recentCtx);
+
+            // 当前消息作为用户消息，但伪装成群聊上下文
+            messages.push({
+                role: 'user',
+                content: `[群聊上下文，你是群友之一，刚看到这些消息觉得想说点什么。直接说你想说的话就行，不需要加任何前缀。记住：简短、自然、像真人。]\n\n最近的消息:\n${topicBuffer.slice(-5).join('\n')}`
+            });
+
+            const payload = JSON.stringify({
+                model: 'gpt-5.4',
+                messages: messages,
+                max_tokens: 150,  // 限制短回复
+                stream: true,
+                temperature: 0.95, // 更随机自然
+                maid: this.agentName
+            });
+
+            const streamData = await this._httpPostStream(
+                `http://127.0.0.1:${this.apiPort}/v1/chat/completions`,
+                payload,
+                { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}` }
+            );
+
+            let reply = '';
+            const lines = streamData.split('\n');
+            for (const line of lines) {
+                if (!line.startsWith('data: ') || line.includes('[DONE]')) continue;
+                try {
+                    const chunk = JSON.parse(line.slice(6));
+                    const delta = chunk.choices?.[0]?.delta?.content;
+                    if (delta) reply += delta;
+                } catch (e) { /* skip */ }
+            }
+            reply = reply.trim();
+
+            if (!reply) return;
+
+            // 清理：去掉所有不像真人的东西
+            reply = reply.replace(/<<<\[TOOL_REQUEST\]>>>[\s\S]*?<<<\[END_TOOL_REQUEST\]>>>/g, '');
+            reply = reply.replace(/<<<\[TOOL_REQUEST\]>>>[\s\S]*/g, '');
+            reply = reply.replace(/(?:maid|tool_name|tool_password|query|engines|max_results|language):「始」[^「]*「末」[,\s]*/g, '');
+            reply = reply.replace(/\*[^*]+\*/g, '');
+            reply = reply.replace(/\[@!?[^\]]*\]/g, '');
+            reply = reply.replace(/<[^>]+>/g, '');
+            reply = reply.replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').replace(/\n{3,}/g, '\n\n');
+
+            // 去掉前缀（AI 有时会加 "[群友]:" 之类的前缀）
+            reply = reply.replace(/^\[?[^\]]*\]?\s*[:：]\s*/, '');
+            // 去掉引号包裹
+            reply = reply.replace(/^["「『](.+)["」』]$/, '$1');
+
+            // 如果回复太长（超过100字），截断到最近的句号/问号处
+            if (reply.length > 100) {
+                const cutIdx = reply.substring(0, 100).search(/[。！？!?\n]/);
+                if (cutIdx > 10) {
+                    reply = reply.substring(0, cutIdx + 1);
+                } else {
+                    reply = reply.substring(0, 80);
+                }
+            }
+
+            reply = reply.trim();
+            if (!reply) return;
+
+            console.log(`[QQBot][水群] -> [${groupId}]: ${reply}`);
+
+            // 保存到上下文
+            const hist = this.recentMessages.get(groupId) || [];
+            hist.push({ role: 'assistant', content: reply });
+
+            // 发送消息——不引用任何消息，直接说话（真人不会每次都回复引用）
+            // 按 [MSG_BREAK] 拆分
+            const chunks = reply.split(/\[MSG_BREAK\]/g).map(s => s.trim()).filter(Boolean);
+            for (let i = 0; i < chunks.length; i++) {
+                this._sendRawMsg('send_group_msg', {
+                    group_id: parseInt(groupId),
+                    message: [{ type: 'text', data: { text: chunks[i] } }]
+                });
+                if (i < chunks.length - 1) {
+                    const nextLen = chunks[i + 1]?.length || 0;
+                    const delay = Math.min(300 + nextLen * 40, 2000) + Math.random() * 800;
+                    await new Promise(r => setTimeout(r, delay));
+                }
+            }
+        } catch (e) {
+            console.error(`[QQBot][水群] Error: ${e.message}`);
+        } finally {
+            this._autoChatPending.delete(groupId);
         }
     }
 

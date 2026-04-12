@@ -99,6 +99,90 @@ const QQ_CONFIG_FIELDS = [
     }
 ];
 
+// 自动水群配置字段
+const AUTO_CHAT_CONFIG_FIELDS = [
+    {
+        key: 'QQ_AUTO_CHAT',
+        label: '启用自动水群',
+        description: '开启后机器人会像真人一样偶尔在群里插嘴聊天，不需要被@或关键词触发',
+        type: 'boolean',
+        default: 'true',
+        placeholder: ''
+    },
+    {
+        key: 'QQ_AUTO_CHAT_GROUPS',
+        label: '水群白名单',
+        description: '允许自动水群的群号，多个用逗号分隔。留空则跟随「允许的群号」设置',
+        type: 'string',
+        default: '',
+        placeholder: '留空=跟随主白名单'
+    },
+    {
+        key: 'QQ_AUTO_CHAT_BASE_PROB',
+        label: '基础触发概率',
+        description: '每条新消息触发水群的基础概率（0~1），建议 0.02~0.05，太高会刷屏',
+        type: 'float',
+        default: '0.03',
+        placeholder: '0.03'
+    },
+    {
+        key: 'QQ_AUTO_CHAT_BURST_PROB',
+        label: '热门话题触发概率',
+        description: '检测到群里在热聊时的触发概率（0~1），建议 0.15~0.35',
+        type: 'float',
+        default: '0.25',
+        placeholder: '0.25'
+    },
+    {
+        key: 'QQ_AUTO_CHAT_COOLDOWN_MIN',
+        label: '最短冷却时间（秒）',
+        description: '同一群两次自动水群的最短间隔',
+        type: 'integer',
+        default: '120',
+        placeholder: '120'
+    },
+    {
+        key: 'QQ_AUTO_CHAT_COOLDOWN_MAX',
+        label: '最长冷却时间（秒）',
+        description: '同一群两次自动水群的最长间隔（实际间隔在最短~最长之间随机）',
+        type: 'integer',
+        default: '600',
+        placeholder: '600'
+    },
+    {
+        key: 'QQ_AUTO_CHAT_HOURS_START',
+        label: '活跃时段起始（时）',
+        description: '自动水群的活跃起始小时（24小时制），非活跃时段不水群',
+        type: 'integer',
+        default: '8',
+        placeholder: '8'
+    },
+    {
+        key: 'QQ_AUTO_CHAT_HOURS_END',
+        label: '活跃时段结束（时）',
+        description: '活跃结束小时（可跨天，如结束=1 表示到次日凌晨1点）',
+        type: 'integer',
+        default: '1',
+        placeholder: '1'
+    },
+    {
+        key: 'QQ_AUTO_CHAT_MSG_THRESHOLD',
+        label: '消息积累阈值',
+        description: '自上次水群后至少积累多少条群消息才可能再次触发',
+        type: 'integer',
+        default: '5',
+        placeholder: '5'
+    },
+    {
+        key: 'QQ_AUTO_CHAT_MAX_DAILY',
+        label: '每日上限',
+        description: '每个群每天最多自动水群多少次',
+        type: 'integer',
+        default: '30',
+        placeholder: '30'
+    }
+];
+
 // RAG 记忆系统依赖的 Embedding 配置
 const EMBEDDING_CONFIG_FIELDS = [
     {
@@ -144,7 +228,7 @@ const EMBEDDING_CONFIG_FIELDS = [
 ];
 
 // 所有管理的配置键集合
-const QQ_CONFIG_KEYS = new Set([...QQ_CONFIG_FIELDS, ...EMBEDDING_CONFIG_FIELDS].map(f => f.key));
+const QQ_CONFIG_KEYS = new Set([...QQ_CONFIG_FIELDS, ...AUTO_CHAT_CONFIG_FIELDS, ...EMBEDDING_CONFIG_FIELDS].map(f => f.key));
 
 // 模块状态
 let fullConfigContent = '';
@@ -209,6 +293,15 @@ function buildManagerHTML() {
                         行为参数
                     </h3>
                     <div id="qq-behavior-fields" class="config-fields"></div>
+                </div>
+
+                <div class="qq-config-section">
+                    <h3 class="section-title">
+                        <span class="material-symbols-outlined">forum</span>
+                        自动水群
+                    </h3>
+                    <p style="font-size:0.85em;color:var(--secondary-text);margin:0 0 12px;">让机器人像真人一样偶尔在群里插嘴聊天——根据话题热度、消息频率、时段等智能判断何时开口，回复简短自然，拟真度拉满。</p>
+                    <div id="qq-autochat-fields" class="config-fields"></div>
                 </div>
 
                 <div class="qq-config-section">
@@ -475,6 +568,41 @@ function buildManagerHTML() {
                 filter: none;
             }
 
+            /* Toggle switch */
+            .toggle-switch {
+                position: relative;
+                width: 44px;
+                height: 24px;
+                background: var(--tertiary-bg);
+                border: 1px solid var(--border-color);
+                border-radius: 12px;
+                cursor: pointer;
+                transition: background 0.25s ease, border-color 0.25s ease;
+                padding: 0;
+                flex-shrink: 0;
+            }
+
+            .toggle-switch .toggle-knob {
+                position: absolute;
+                top: 2px;
+                left: 2px;
+                width: 18px;
+                height: 18px;
+                background: var(--secondary-text);
+                border-radius: 50%;
+                transition: transform 0.25s ease, background 0.25s ease;
+            }
+
+            .toggle-switch.toggle-on {
+                background: #34d399;
+                border-color: #34d399;
+            }
+
+            .toggle-switch.toggle-on .toggle-knob {
+                transform: translateX(20px);
+                background: #fff;
+            }
+
             /* 响应式 */
             @media (max-width: 640px) {
                 .qq-status-bar {
@@ -565,12 +693,13 @@ function renderConfigFields() {
     const connectionKeys = ['QQ_WS_URL', 'QQ_ACCESS_TOKEN', 'QQ_BOT_SELF_IDS', 'QQ_AGENT_NAME'];
     const groupKeys = ['QQ_ALLOWED_GROUPS', 'QQ_ADMIN_USERS'];
     const behaviorKeys = ['QQ_KEYWORD_TRIGGERS', 'QQ_COOLDOWN_SECONDS', 'QQ_RATE_LIMIT_PER_MINUTE', 'QQ_MAX_MESSAGE_LENGTH', 'QQ_RECENT_MSG_LIMIT'];
-
+    const autoChatKeys = AUTO_CHAT_CONFIG_FIELDS.map(f => f.key);
     const embeddingKeys = EMBEDDING_CONFIG_FIELDS.map(f => f.key);
 
     renderFieldGroup('qq-connection-fields', connectionKeys);
     renderFieldGroup('qq-group-fields', groupKeys);
     renderFieldGroup('qq-behavior-fields', behaviorKeys);
+    renderFieldGroup('qq-autochat-fields', autoChatKeys);
     renderFieldGroup('qq-embedding-fields', embeddingKeys);
 }
 
@@ -583,7 +712,9 @@ function renderFieldGroup(containerId, keys) {
     container.innerHTML = '';
 
     keys.forEach(key => {
-        const fieldDef = QQ_CONFIG_FIELDS.find(f => f.key === key) || EMBEDDING_CONFIG_FIELDS.find(f => f.key === key);
+        const fieldDef = QQ_CONFIG_FIELDS.find(f => f.key === key)
+            || AUTO_CHAT_CONFIG_FIELDS.find(f => f.key === key)
+            || EMBEDDING_CONFIG_FIELDS.find(f => f.key === key);
         if (!fieldDef) return;
 
         const currentValue = getConfigValue(key);
@@ -606,8 +737,37 @@ function renderFieldGroup(containerId, keys) {
             group.appendChild(desc);
         }
 
-        // Input
-        if (fieldDef.type === 'password') {
+        // Input - Boolean toggle
+        if (fieldDef.type === 'boolean') {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'toggle-switch-wrapper';
+            wrapper.style.cssText = 'display:flex;align-items:center;gap:10px;';
+
+            const toggle = document.createElement('button');
+            toggle.type = 'button';
+            toggle.id = `qq-field-${key}`;
+            toggle.dataset.configKey = key;
+            const isOn = displayValue !== 'false';
+            toggle.dataset.value = isOn ? 'true' : 'false';
+            toggle.className = `toggle-switch ${isOn ? 'toggle-on' : ''}`;
+            toggle.innerHTML = `<span class="toggle-knob"></span>`;
+            toggle.addEventListener('click', () => {
+                const newVal = toggle.dataset.value === 'true' ? 'false' : 'true';
+                toggle.dataset.value = newVal;
+                toggle.classList.toggle('toggle-on', newVal === 'true');
+                statusLabel.textContent = newVal === 'true' ? '已开启' : '已关闭';
+            });
+
+            const statusLabel = document.createElement('span');
+            statusLabel.style.cssText = 'font-size:0.85em;color:var(--secondary-text);';
+            statusLabel.textContent = isOn ? '已开启' : '已关闭';
+
+            wrapper.appendChild(toggle);
+            wrapper.appendChild(statusLabel);
+            group.appendChild(wrapper);
+
+        // Input - Password
+        } else if (fieldDef.type === 'password') {
             const wrapper = document.createElement('div');
             wrapper.className = 'input-with-toggle';
 
@@ -638,7 +798,7 @@ function renderFieldGroup(containerId, keys) {
             group.appendChild(wrapper);
         } else {
             const input = document.createElement('input');
-            input.type = fieldDef.type === 'integer' ? 'number' : 'text';
+            input.type = (fieldDef.type === 'integer' || fieldDef.type === 'float') ? 'number' : 'text';
             input.id = `qq-field-${key}`;
             input.name = key;
             input.value = displayValue;
@@ -647,6 +807,10 @@ function renderFieldGroup(containerId, keys) {
             if (fieldDef.type === 'integer') {
                 input.step = '1';
                 input.min = '0';
+            } else if (fieldDef.type === 'float') {
+                input.step = '0.01';
+                input.min = '0';
+                input.max = '1';
             }
             group.appendChild(input);
         }
@@ -665,12 +829,13 @@ async function handleSave(e) {
     if (saveBtn) saveBtn.disabled = true;
 
     try {
-        // 收集表单中所有 QQ 配置值（含 Embedding 配置）
+        // 收集表单中所有 QQ 配置值（含自动水群、Embedding 配置）
         const formValues = {};
-        [...QQ_CONFIG_FIELDS, ...EMBEDDING_CONFIG_FIELDS].forEach(field => {
-            const input = document.querySelector(`[data-config-key="${field.key}"]`);
-            if (input) {
-                formValues[field.key] = input.value;
+        [...QQ_CONFIG_FIELDS, ...AUTO_CHAT_CONFIG_FIELDS, ...EMBEDDING_CONFIG_FIELDS].forEach(field => {
+            const el = document.querySelector(`[data-config-key="${field.key}"]`);
+            if (el) {
+                // boolean toggle 用 dataset.value，普通 input 用 .value
+                formValues[field.key] = field.type === 'boolean' ? el.dataset.value : el.value;
             }
         });
 
@@ -700,8 +865,8 @@ async function handleSave(e) {
             }
         });
 
-        // 追加配置文件中不存在但表单中有值的新键（含 Embedding 配置）
-        [...QQ_CONFIG_FIELDS, ...EMBEDDING_CONFIG_FIELDS].forEach(field => {
+        // 追加配置文件中不存在但表单中有值的新键（含自动水群、Embedding 配置）
+        [...QQ_CONFIG_FIELDS, ...AUTO_CHAT_CONFIG_FIELDS, ...EMBEDDING_CONFIG_FIELDS].forEach(field => {
             if (!writtenKeys.has(field.key) && formValues[field.key] !== undefined && formValues[field.key] !== '') {
                 newLines.push(`${field.key}=${formValues[field.key]}`);
             }
