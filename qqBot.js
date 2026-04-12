@@ -25,8 +25,17 @@ class QQBot {
         this.apiKey = config.Key || '';
         this.apiPort = config.PORT || '6005';
 
+        // 按群指定 Agent：格式 "群号1:AgentName1,群号2:AgentName2"
+        // 未指定的群使用默认 agentName
+        this.groupAgentMap = {};
+        (config.QQ_GROUP_AGENTS || '').split(',').filter(Boolean).forEach(pair => {
+            const [gid, agent] = pair.split(':').map(s => s.trim());
+            if (gid && agent) this.groupAgentMap[gid] = agent;
+        });
+
         // Agent 人设 (loaded async in start())
-        this.agentPrompt = '';
+        this.agentPrompt = '';        // 默认 agent prompt
+        this.agentPrompts = {};       // 按 agent name 缓存的 prompts
         this.toolPassword = '';
 
         // ===== 自动水群配置 =====
@@ -78,21 +87,22 @@ class QQBot {
         } catch (e) { return ''; }
     }
 
-    async _loadAgentPrompt() {
+    async _loadAgentPrompt(agentNameOverride) {
+        const targetAgent = agentNameOverride || this.agentName;
         try {
             // 读取 agent_map.json 找到 agent 对应的文件名
             const mapPath = path.join(__dirname, 'agent_map.json');
             const agentMap = JSON.parse(await fsPromises.readFile(mapPath, 'utf-8'));
-            const fileName = agentMap[this.agentName];
+            const fileName = agentMap[targetAgent];
             if (!fileName) {
-                console.warn(`[QQBot] Agent "${this.agentName}" not found in agent_map.json`);
+                console.warn(`[QQBot] Agent "${targetAgent}" not found in agent_map.json`);
                 return '';
             }
             // 读取 Agent 文件
             const agentPath = path.join(__dirname, 'Agent', fileName);
             let content = await fsPromises.readFile(agentPath, 'utf-8');
             // 保留 VCP 模板变量 {{...}}，让 VCP 中间层自动展开
-            console.log(`[QQBot] Loaded agent prompt: ${fileName} (${content.length} chars)`);
+            console.log(`[QQBot] Loaded agent prompt: ${targetAgent} -> ${fileName} (${content.length} chars)`);
             return content;
         } catch (e) {
             console.error(`[QQBot] Failed to load agent prompt: ${e.message}`);
@@ -102,8 +112,18 @@ class QQBot {
 
     async start() {
         this.agentPrompt = await this._loadAgentPrompt();
+        this.agentPrompts[this.agentName] = this.agentPrompt;
         this.toolPassword = await this._loadToolPassword();
-        console.log(`[QQBot] Starting... WS: ${this.wsUrl}, Agent: ${this.agentName}`);
+
+        // 预加载各群独立 Agent 的 prompt
+        for (const [gid, agentName] of Object.entries(this.groupAgentMap)) {
+            if (!this.agentPrompts[agentName]) {
+                this.agentPrompts[agentName] = await this._loadAgentPrompt(agentName);
+            }
+            console.log(`[QQBot] Group ${gid} -> Agent: ${agentName}`);
+        }
+
+        console.log(`[QQBot] Starting... WS: ${this.wsUrl}, Default Agent: ${this.agentName}`);
         console.log(`[QQBot] Allowed groups: ${this.allowedGroups.join(', ') || 'ALL'}`);
         this._connect();
         this._watchDreamLogs();
@@ -460,6 +480,16 @@ class QQBot {
         return this.adminUsers.includes(String(userId));
     }
 
+    /**
+     * 获取指定群的 Agent 名和 prompt（支持按群独立 Agent）
+     */
+    _getAgentForChat(chatId) {
+        const groupId = String(chatId);
+        const agentName = this.groupAgentMap[groupId] || this.agentName;
+        const prompt = this.agentPrompts[agentName] || this.agentPrompt;
+        return { agentName, prompt };
+    }
+
     _containsDangerousContent(text) {
         const lower = text.toLowerCase();
         return QQBot.DANGEROUS_PATTERNS.some(p => lower.includes(p.toLowerCase()));
@@ -505,10 +535,13 @@ class QQBot {
                 ? ''
                 : '\n[权限限制] 当前用户为普通用户。允许使用的工具：WeatherQuery、DailyHot、AnimeFinder、ArtistMatcher等查询类工具。严禁调用以下高危工具：PowerShellExecutor、LinuxShellExecutor、FileOperator、FileServer、DailyNoteWrite、DailyNoteManager、AgentDream、ChromeBridge。严禁执行文件删除、系统命令、配置修改操作。如用户要求执行高危操作，礼貌拒绝。';
 
+            // 按群选择 Agent（不同群可以用不同 agent 人设）
+            const { agentName: chatAgentName, prompt: chatAgentPrompt } = this._getAgentForChat(chatId);
+
             // Agent 人设作为 system message，VCP 中间层会自动展开 {{变量}}
             const messages = [];
-            if (this.agentPrompt) {
-                messages.push({ role: 'system', content: this.agentPrompt });
+            if (chatAgentPrompt) {
+                messages.push({ role: 'system', content: chatAgentPrompt });
             }
             // 工具密码（VCPToolCode 验证必需，每次实时读取因为密码会动态刷新）
             const currentToolPwd = await this._loadToolPassword();
@@ -555,7 +588,7 @@ class QQBot {
                 messages: messages,
                 max_tokens: isAStockAnalysis ? 8000 : (isAutoChat ? 200 : 1000),
                 stream: true,
-                maid: this.agentName
+                maid: chatAgentName
             });
 
             const streamData = await this._httpPostStream(`http://127.0.0.1:${this.apiPort}/v1/chat/completions`, payload, {
