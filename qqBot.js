@@ -283,9 +283,13 @@ class QQBot {
         let triggered = true;
         if (isGroup) {
             const isMentioned = this._isMentioned(event.message);
-            const groupKws = this.groupKeywordsMap[String(event.group_id)] || this.keywords;
+            const gidStr = String(event.group_id);
+            const groupKws = this.groupKeywordsMap[gidStr] || this.keywords;
             const isKeyword = hasText && groupKws.some(kw => rawText.toLowerCase().includes(kw.toLowerCase()));
             triggered = isMentioned || isKeyword;
+            if (hasText && !triggered) {
+                console.log(`[QQBot] 未触发 group=${gidStr} text="${rawText.substring(0,30)}" kws=[${groupKws.join(',')}] mentioned=${isMentioned}`);
+            }
             if (!triggered) {
                 // 未触发时：纯图片放入缓冲区等后续@消息合并
                 if (hasMedia) {
