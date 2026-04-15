@@ -44,6 +44,15 @@ class QQBot {
             }
         });
 
+        // 广播专用群：这些群不响应任何消息（关键词/@/水群都禁用），只接收定时推送
+        this.broadcastOnlyGroups = (config.QQ_BROADCAST_ONLY_GROUPS || '').split(',').filter(Boolean);
+
+        // 每日简报配置
+        this.dailyBriefingHour = parseInt(config.QQ_DAILY_BRIEFING_HOUR || '9');      // 默认早上9点
+        this.dailyBriefingMinute = parseInt(config.QQ_DAILY_BRIEFING_MINUTE || '0');  // 默认0分
+        this._dailyBriefingLastDate = null;   // 记录上次推送的日期字符串，防止同一天重复
+        this._dailyBriefingTimer = null;
+
         // Agent 人设 (loaded async in start())
         this.agentPrompt = '';        // 默认 agent prompt
         this.agentPrompts = {};       // 按 agent name 缓存的 prompts
@@ -139,6 +148,7 @@ class QQBot {
         this._connect();
         this._watchDreamLogs();
         this._startCleanupTimer();
+        this._startDailyBriefingScheduler();
     }
 
     /**
@@ -265,6 +275,11 @@ class QQBot {
         // 群消息检查白名单
         if (isGroup && this.allowedGroups.length > 0 && !this.allowedGroups.includes(String(event.group_id))) return;
 
+        // 广播专用群：完全不响应任何消息（只负责接收定时推送）
+        if (isGroup && this.broadcastOnlyGroups.includes(String(event.group_id))) {
+            return;
+        }
+
         // 提取文本、图片、文件
         const rawText = this._extractText(event.message);
         const imageUrls = this._extractImageUrls(event.message);
@@ -380,6 +395,15 @@ class QQBot {
         if (aStockTrigger && this._isAdminUser(userId)) {
             console.log(`[QQBot][A股] 触发全流程分析: ${cleanText}`);
             this._runAStockFullAnalysis(chatId, userId, messageId, nick, isPrivate);
+            return;
+        }
+
+        // ===== 每日简报手动触发（admin）=====
+        const briefingTrigger = cleanText.match(/^(推送|触发|跑)?(每日简报|简报|计软简报)/);
+        if (briefingTrigger && this._isAdminUser(userId)) {
+            console.log(`[QQBot][简报] 管理员手动触发: ${cleanText}`);
+            this._sendGroupMsg(chatId, '收到，正在手动触发每日简报推送...');
+            this._triggerDailyBriefingNow().catch(e => console.error(`[QQBot][简报] 手动触发失败: ${e.message}`));
             return;
         }
 
@@ -518,8 +542,8 @@ class QQBot {
             this.recentMessagesAccess.set(chatId, Date.now());
             const isAdmin = this._isAdminUser(userId);
 
-            // 非 admin 用户发送高危内容时直接拒绝（水群模式跳过）
-            if (!isAutoChat && !isAdmin && this._containsDangerousContent(text)) {
+            // 非 admin 用户发送高危内容时直接拒绝（水群模式和系统内部任务跳过）
+            if (!isAutoChat && !isAStockAnalysis && !isAdmin && this._containsDangerousContent(text)) {
                 console.log(`[QQBot] BLOCKED dangerous request from non-admin ${userId}: ${text.substring(0, 60)}`);
                 const rejectMsg = '哈？这种操作可不能随便让你搞，找管理员去。';
                 isPrivate ? this._sendPrivateMsg(userId, rejectMsg) : this._sendGroupMsg(chatId, rejectMsg, messageId);
@@ -604,6 +628,7 @@ class QQBot {
                 messages: messages,
                 max_tokens: isAStockAnalysis ? 8000 : (isAutoChat ? 200 : 1000),
                 stream: true,
+                reasoning_effort: 'high',
                 maid: chatAgentName
             });
 
@@ -1413,10 +1438,312 @@ class QQBot {
         }
     }
 
+    // ===== 每日简报推送系统 =====
+
+    /**
+     * 启动每日简报调度器：每分钟检查一次是否到推送时间
+     */
+    _startDailyBriefingScheduler() {
+        if (this.broadcastOnlyGroups.length === 0) {
+            console.log('[QQBot][简报] 无广播目标群，跳过调度器启动');
+            return;
+        }
+        console.log(`[QQBot][简报] 调度器启动：每天 ${this.dailyBriefingHour}:${String(this.dailyBriefingMinute).padStart(2,'0')} 推送到 [${this.broadcastOnlyGroups.join(',')}]`);
+
+        this._dailyBriefingTimer = setInterval(() => {
+            const now = new Date();
+            const hour = now.getHours();
+            const minute = now.getMinutes();
+            const todayKey = `${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()}`;
+
+            // 到达推送时间窗口（容忍 5 分钟内触发），且今天还没推过
+            const hitWindow = hour === this.dailyBriefingHour && minute >= this.dailyBriefingMinute && minute < this.dailyBriefingMinute + 5;
+            if (hitWindow && this._dailyBriefingLastDate !== todayKey) {
+                this._dailyBriefingLastDate = todayKey;
+                console.log(`[QQBot][简报] ⏰ 触发每日简报推送`);
+                for (const groupId of this.broadcastOnlyGroups) {
+                    this._runDailyBriefing(groupId).catch(e => console.error(`[QQBot][简报] ${groupId} 失败: ${e.message}`));
+                }
+            }
+        }, 60 * 1000);
+
+        if (this._dailyBriefingTimer.unref) this._dailyBriefingTimer.unref();
+    }
+
+    /**
+     * 手动触发一次每日简报（测试用 / 管理员指令）
+     */
+    async _triggerDailyBriefingNow() {
+        for (const groupId of this.broadcastOnlyGroups) {
+            await this._runDailyBriefing(groupId);
+        }
+    }
+
+    /**
+     * 生成并推送每日简报
+     */
+    async _runDailyBriefing(groupId) {
+        console.log(`[QQBot][简报] 开始生成 group=${groupId}`);
+        const today = new Date();
+        const dateStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+        const weekday = ['周日','周一','周二','周三','周四','周五','周六'][today.getDay()];
+
+        // 进度提示
+        this._sendGroupMsg(groupId, `📰 正在生成 ${dateStr} ${weekday} 的每日简报（AI动态 + GitHub优质项目），请稍候...`);
+
+        // 第一部分：AI 模型发布新闻
+        const aiPrompt = this._buildAINewsPrompt(dateStr);
+        const adminUid = this.adminUsers[0] || this.selfIds[0] || '0';
+        const aiResult = await this._callVCPChat(
+            groupId, adminUid, aiPrompt,
+            0, '系统', false, [], [],
+            { isAStockAnalysis: true }  // 复用这个标记：启用大 max_tokens + 返回文本不直接发送
+        );
+
+        if (!aiResult) {
+            this._sendGroupMsg(groupId, '❌ AI新闻部分生成失败，流程中断');
+            return;
+        }
+        console.log(`[QQBot][简报] AI 新闻完成 (${aiResult.length}字)`);
+        this._sendGroupMsg(groupId, `✅ AI动态已整理，继续生成 GitHub 项目推荐...`);
+        await new Promise(r => setTimeout(r, 2000));
+
+        // 第二部分：GitHub 优秀项目
+        const ghPrompt = this._buildGithubTrendingPrompt(dateStr);
+        const ghResult = await this._callVCPChat(
+            groupId, adminUid, ghPrompt,
+            0, '系统', false, [], [],
+            { isAStockAnalysis: true }
+        );
+
+        console.log(`[QQBot][简报] GitHub 部分完成 (${(ghResult||'').length}字)`);
+
+        // 清理 MSG_BREAK
+        const aiClean = (aiResult || '[AI新闻生成失败]').replace(/\[MSG_BREAK\]/g, '\n').trim();
+        const ghClean = (ghResult || '[GitHub推荐生成失败]').replace(/\[MSG_BREAK\]/g, '\n').trim();
+
+        // 用合并转发卡片推送（像 A股研报一样）
+        const botId = this.selfIds[0] || '10000';
+        const botName = '计软每日简报';
+        const dateDisplay = today.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+
+        const splitText = (text, maxLen = 4000) => {
+            const parts = [];
+            for (let i = 0; i < text.length; i += maxLen) {
+                parts.push(text.substring(i, i + maxLen));
+            }
+            return parts.length > 0 ? parts : ['[空]'];
+        };
+
+        const forwardNodes = [];
+        forwardNodes.push({
+            type: 'node',
+            data: {
+                name: botName, uin: botId,
+                content: [{ type: 'text', data: { text: `📰 计软学习互助 · 每日简报\n${dateDisplay}\n${weekday}` } }]
+            }
+        });
+        forwardNodes.push({
+            type: 'node',
+            data: {
+                name: botName, uin: botId,
+                content: [{ type: 'text', data: { text: '═══ 🤖 今日 AI 模型 & 行业动态 ═══' } }]
+            }
+        });
+        for (const part of splitText(aiClean)) {
+            forwardNodes.push({
+                type: 'node',
+                data: { name: botName, uin: botId, content: [{ type: 'text', data: { text: part } }] }
+            });
+        }
+        forwardNodes.push({
+            type: 'node',
+            data: {
+                name: botName, uin: botId,
+                content: [{ type: 'text', data: { text: '═══ ⭐ 今日 GitHub 优质项目 ═══' } }]
+            }
+        });
+        for (const part of splitText(ghClean)) {
+            forwardNodes.push({
+                type: 'node',
+                data: { name: botName, uin: botId, content: [{ type: 'text', data: { text: part } }] }
+            });
+        }
+        forwardNodes.push({
+            type: 'node',
+            data: {
+                name: botName, uin: botId,
+                content: [{ type: 'text', data: { text: '💡 数据来自公开信息源，仅供学习参考。\n有任何项目或新闻想要跟进，评论区留言~' } }]
+            }
+        });
+
+        try {
+            this._sendRawMsg('send_group_forward_msg', {
+                group_id: parseInt(groupId),
+                messages: forwardNodes
+            });
+            console.log(`[QQBot][简报] ✅ 合并转发已发送 (${forwardNodes.length} 节点)`);
+        } catch (e) {
+            console.error(`[QQBot][简报] 合并转发失败: ${e.message}，降级为文本`);
+            const allText = `📰 每日简报 ${dateDisplay}\n\n【AI 动态】\n${aiClean}\n\n【GitHub 项目】\n${ghClean}`;
+            for (const chunk of splitText(allText)) {
+                this._sendRawMsg('send_group_msg', {
+                    group_id: parseInt(groupId),
+                    message: [{ type: 'text', data: { text: chunk } }]
+                });
+                await new Promise(r => setTimeout(r, 800));
+            }
+        }
+    }
+
+    /**
+     * 构建 AI 新闻搜索 prompt
+     */
+    _buildAINewsPrompt(dateStr) {
+        return `[每日简报任务 - 第一部分：AI 模型与行业动态 | ${dateStr}]
+
+⚠️⚠️⚠️ 执行流程（严格按步骤，不要跳步）⚠️⚠️⚠️
+
+**第 1 步：立即发出下面这个 TOOL_REQUEST，不要做任何其他事**
+
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」FreeWebSearch「末」,
+query:「始」2026 AI 大模型 最新发布「末」,
+engines:「始」brave,wikipedia「末」,
+max_results:「始」8「末」,
+language:「始」zh-CN「末」
+<<<[END_TOOL_REQUEST]>>>
+
+**第 2 步：收到第一次搜索结果后，立即发第二个 TOOL_REQUEST（换 query）**
+
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」FreeWebSearch「末」,
+query:「始」OpenAI Anthropic Google 新模型 2026「末」,
+engines:「始」brave,wikipedia「末」,
+max_results:「始」8「末」,
+language:「始」zh-CN「末」
+<<<[END_TOOL_REQUEST]>>>
+
+**第 3 步：收到第二次搜索结果后，立即发第三个 TOOL_REQUEST**
+
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」FreeWebSearch「末」,
+query:「始」开源大模型 llama qwen deepseek 2026「末」,
+engines:「始」brave,wikipedia「末」,
+max_results:「始」8「末」,
+language:「始」zh-CN「末」
+<<<[END_TOOL_REQUEST]>>>
+
+**第 4 步：三次搜索全部完成后，综合所有搜索结果写最终报告**
+
+绝对禁止的行为：
+- 禁止在调用工具之前输出任何文字
+- 禁止跳过任何一次搜索
+- 禁止使用 TavilySearch / GoogleSearch / SerpSearch / FileOperator（这些都不可用，只允许 FreeWebSearch）
+- 禁止委派其他 Agent（不要调用 AgentAssistant）
+- 禁止任何角色扮演开场白
+- 禁止说"搜不到"就放弃——Wikipedia 引擎在 FreeWebSearch 里是始终可用的
+
+===== 最终报告格式（步骤 4 之后输出）=====
+
+【今日 AI 动态】${dateStr}
+
+1. 标题
+要点：2-3 句说清楚
+来源：真实 URL（必须来自搜索结果）
+
+2. 标题
+要点：...
+来源：...
+
+（继续到 5-8 条）
+
+报告要求：
+- 800-1500 字
+- 纯文本无 markdown
+- 优先开源模型、技术突破、学生/开发者视角
+- 跳过融资/人事/八卦
+- 所有 URL 必须来自上面三次搜索的真实结果，禁止编造
+- 报告结尾不要加任何评论或寒暄，到最后一条动态结束即可`;
+    }
+
+    /**
+     * 构建 GitHub 优秀项目搜索 prompt
+     */
+    _buildGithubTrendingPrompt(dateStr) {
+        return `[每日简报任务 - 第二部分：GitHub 优质项目 | ${dateStr}]
+
+⚠️⚠️⚠️ 执行流程（严格按步骤）⚠️⚠️⚠️
+
+**第 1 步：立即发出下面这个 TOOL_REQUEST**
+
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」FreeWebSearch「末」,
+query:「始」github trending repository 2026「末」,
+engines:「始」brave,wikipedia「末」,
+max_results:「始」8「末」,
+language:「始」zh-CN「末」
+<<<[END_TOOL_REQUEST]>>>
+
+**第 2 步：收到第一次结果后，立即发第二个**
+
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」FreeWebSearch「末」,
+query:「始」github 热门 开源项目 2026「末」,
+engines:「始」brave,wikipedia「末」,
+max_results:「始」8「末」,
+language:「始」zh-CN「末」
+<<<[END_TOOL_REQUEST]>>>
+
+**第 3 步：收到第二次结果后，立即发第三个**
+
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」FreeWebSearch「末」,
+query:「始」open source AI developer tools github 2026「末」,
+engines:「始」brave,wikipedia「末」,
+max_results:「始」8「末」,
+language:「始」zh-CN「末」
+<<<[END_TOOL_REQUEST]>>>
+
+**第 4 步：三次搜索都完成后，写最终报告**
+
+绝对禁止：
+- 禁止在调用工具前输出任何文字
+- 禁止跳过任何一次搜索
+- 禁止 TavilySearch / GoogleSearch / SerpSearch / FileOperator（只允许 FreeWebSearch）
+- 禁止委派其他 Agent
+- 禁止任何角色扮演开场白
+- 禁止说"搜不到"就放弃
+
+===== 最终报告格式 =====
+
+【今日 GitHub 优质项目】${dateStr}
+
+1. 项目名：owner/repo
+亮点：2-3 句说清楚做什么、为什么值得学
+技术栈：主要语言
+适合：初学者/进阶/特定领域
+链接：https://github.com/owner/repo
+
+2. 项目名：...
+...
+
+（5-7 个项目）
+
+报告要求：
+- 600-1200 字
+- 纯文本无 markdown、无寒暄、无结语
+- 优先：对学生有学习价值、解决真实问题、最近活跃
+- 跳过：面试题清单、awesome 列表、VSCode/React 等烂大街的、商业推广
+- 所有 URL 必须来自搜索结果
+- 报告到最后一个项目结束即可`;
+    }
+
     stop() {
         console.log('[QQBot] Stopping...');
         if (this.cleanupTimer) clearInterval(this.cleanupTimer);
         if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+        if (this._dailyBriefingTimer) clearInterval(this._dailyBriefingTimer);
         if (this.ws) {
             try { this.ws.close(); } catch (e) {}
         }
