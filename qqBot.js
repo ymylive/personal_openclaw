@@ -624,7 +624,7 @@ class QQBot {
             }
 
             const payload = JSON.stringify({
-                model: 'gpt-5.4',
+                model: 'gpt-5.5',
                 messages: messages,
                 max_tokens: isAStockAnalysis ? 8000 : (isAutoChat ? 200 : 1000),
                 stream: true,
@@ -1368,7 +1368,7 @@ class QQBot {
             });
 
             const judgePayload = JSON.stringify({
-                model: 'gpt-5.4',
+                model: 'gpt-5.5',
                 messages: judgeMessages,
                 max_tokens: 100,
                 stream: true,
@@ -1600,7 +1600,16 @@ class QQBot {
      * 构建 AI 新闻搜索 prompt
      */
     _buildAINewsPrompt(dateStr) {
+        // 计算昨天、今天的日期字符串
+        const today = new Date(dateStr);
+        const yest = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+        const yestStr = `${yest.getFullYear()}-${String(yest.getMonth()+1).padStart(2,'0')}-${String(yest.getDate()).padStart(2,'0')}`;
+        const todayShort = `${today.getMonth()+1}月${today.getDate()}日`;
+        const yestShort = `${yest.getMonth()+1}月${yest.getDate()}日`;
+
         return `[每日简报任务 - 第一部分：AI 模型与行业动态 | ${dateStr}]
+
+🕐 **时效性强制要求**：只收录**${yestStr} 至 ${dateStr} 这 24 小时内**发布的新闻。超过 24 小时的旧消息、历史概述、模型介绍、维基百科常识性条目等一律丢弃。
 
 ⚠️⚠️⚠️ 执行流程（严格按步骤，不要跳步）⚠️⚠️⚠️
 
@@ -1608,70 +1617,99 @@ class QQBot {
 
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」FreeWebSearch「末」,
-query:「始」2026 AI 大模型 最新发布「末」,
+query:「始」${yestStr} AI 大模型 发布 最新「末」,
 engines:「始」brave,wikipedia「末」,
-max_results:「始」8「末」,
+max_results:「始」10「末」,
 language:「始」zh-CN「末」
 <<<[END_TOOL_REQUEST]>>>
 
-**第 2 步：收到第一次搜索结果后，立即发第二个 TOOL_REQUEST（换 query）**
+**第 2 步：收到第一次搜索结果后，立即发第二个 TOOL_REQUEST**
 
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」FreeWebSearch「末」,
-query:「始」OpenAI Anthropic Google 新模型 2026「末」,
+query:「始」${dateStr} OpenAI Anthropic Google 新模型 发布「末」,
 engines:「始」brave,wikipedia「末」,
-max_results:「始」8「末」,
+max_results:「始」10「末」,
 language:「始」zh-CN「末」
 <<<[END_TOOL_REQUEST]>>>
 
-**第 3 步：收到第二次搜索结果后，立即发第三个 TOOL_REQUEST**
+**第 3 步：收到第二次搜索结果后，立即发第三个 TOOL_REQUEST（英文 query 覆盖国际源）**
 
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」FreeWebSearch「末」,
-query:「始」开源大模型 llama qwen deepseek 2026「末」,
+query:「始」AI model release ${yestStr} OR ${dateStr}「末」,
 engines:「始」brave,wikipedia「末」,
-max_results:「始」8「末」,
+max_results:「始」10「末」,
+language:「始」en-US「末」
+<<<[END_TOOL_REQUEST]>>>
+
+**第 4 步（可选补充）：如果前三次找到的新闻少于 5 条近 24 小时的条目，追加一次搜索**
+
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」FreeWebSearch「末」,
+query:「始」${yestShort} ${todayShort} 开源大模型 llama qwen deepseek「末」,
+engines:「始」brave,wikipedia「末」,
+max_results:「始」10「末」,
 language:「始」zh-CN「末」
 <<<[END_TOOL_REQUEST]>>>
 
-**第 4 步：三次搜索全部完成后，综合所有搜索结果写最终报告**
+**第 5 步：搜索完成后，严格筛选并输出最终报告**
 
-绝对禁止的行为：
+===== 筛选规则（每条新闻逐条检查）=====
+一条新闻能进报告的唯一条件：
+✅ 发布时间在 ${yestStr} 00:00 到 ${dateStr} 23:59 之间（近 24-48 小时）
+✅ 搜索结果摘要中能明确看到日期或"发布于"/"today"/"yesterday"/"刚刚"/"本周"等时效标记
+
+必须丢弃的条目：
+❌ Wikipedia 概览页（ChatGPT / Claude / Gemini 等词条介绍）——这些是常识不是新闻
+❌ 发布日期早于 ${yestStr} 的所有内容
+❌ 无法判断发布日期的条目（宁缺毋滥）
+❌ 融资新闻、人事变动、公司八卦
+❌ 泛泛的"AI 发展综述"类文章
+
+===== 绝对禁止 =====
 - 禁止在调用工具之前输出任何文字
-- 禁止跳过任何一次搜索
-- 禁止使用 TavilySearch / GoogleSearch / SerpSearch / FileOperator（这些都不可用，只允许 FreeWebSearch）
-- 禁止委派其他 Agent（不要调用 AgentAssistant）
+- 禁止跳过搜索步骤 1-3（第 4 步可跳）
+- 禁止使用 TavilySearch / GoogleSearch / SerpSearch / FileOperator
+- 禁止委派其他 Agent
 - 禁止任何角色扮演开场白
-- 禁止说"搜不到"就放弃——Wikipedia 引擎在 FreeWebSearch 里是始终可用的
+- 禁止把 Wikipedia 的 ChatGPT/Claude/Gemini 词条当成"今日新闻"收录
 
-===== 最终报告格式（步骤 4 之后输出）=====
+===== 最终报告格式 =====
 
-【今日 AI 动态】${dateStr}
+【今日 AI 动态】${dateStr}（近24小时）
 
-1. 标题
-要点：2-3 句说清楚
-来源：真实 URL（必须来自搜索结果）
+1. [发布日期] 标题
+要点：2-3 句说清楚是什么、为什么重要
+来源：真实 URL
 
-2. 标题
+2. [发布日期] 标题
 要点：...
 来源：...
 
-（继续到 5-8 条）
+（真实条目 3-8 条，宁少勿滥）
 
-报告要求：
-- 800-1500 字
+===== 报告要求 =====
+- 400-1500 字（真实的就不用凑字数）
 - 纯文本无 markdown
-- 优先开源模型、技术突破、学生/开发者视角
+- **每条必须带日期标记**，例如 [${dateStr}] 或 [${yestStr}]
+- 优先开源模型发布、技术突破、新论文、新工具
 - 跳过融资/人事/八卦
-- 所有 URL 必须来自上面三次搜索的真实结果，禁止编造
-- 报告结尾不要加任何评论或寒暄，到最后一条动态结束即可`;
+- 所有 URL 必须来自搜索结果，禁止编造
+- **如果筛选后真实的近 24 小时条目少于 3 条**，就只输出实际找到的几条 + 一句"今日 AI 圈动态较少"收尾，不要硬凑`;
     }
 
     /**
      * 构建 GitHub 优秀项目搜索 prompt
      */
     _buildGithubTrendingPrompt(dateStr) {
+        const today = new Date(dateStr);
+        const yest = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+        const yestStr = `${yest.getFullYear()}-${String(yest.getMonth()+1).padStart(2,'0')}-${String(yest.getDate()).padStart(2,'0')}`;
+
         return `[每日简报任务 - 第二部分：GitHub 优质项目 | ${dateStr}]
+
+🕐 **时效性强制要求**：只收录**${yestStr} 至 ${dateStr} 这 24 小时内**有活跃更新的项目（近 24-48 小时内有 commit、新版本发布、或首次开源）。老项目、历史介绍、维基百科常识性条目一律丢弃。
 
 ⚠️⚠️⚠️ 执行流程（严格按步骤）⚠️⚠️⚠️
 
@@ -1679,64 +1717,75 @@ language:「始」zh-CN「末」
 
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」FreeWebSearch「末」,
-query:「始」github trending repository 2026「末」,
+query:「始」github trending today ${dateStr}「末」,
 engines:「始」brave,wikipedia「末」,
-max_results:「始」8「末」,
-language:「始」zh-CN「末」
+max_results:「始」10「末」,
+language:「始」en-US「末」
 <<<[END_TOOL_REQUEST]>>>
 
 **第 2 步：收到第一次结果后，立即发第二个**
 
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」FreeWebSearch「末」,
-query:「始」github 热门 开源项目 2026「末」,
+query:「始」github daily trending ${yestStr}「末」,
 engines:「始」brave,wikipedia「末」,
-max_results:「始」8「末」,
-language:「始」zh-CN「末」
+max_results:「始」10「末」,
+language:「始」en-US「末」
 <<<[END_TOOL_REQUEST]>>>
 
 **第 3 步：收到第二次结果后，立即发第三个**
 
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」FreeWebSearch「末」,
-query:「始」open source AI developer tools github 2026「末」,
+query:「始」new open source release ${yestStr} OR ${dateStr}「末」,
 engines:「始」brave,wikipedia「末」,
-max_results:「始」8「末」,
-language:「始」zh-CN「末」
+max_results:「始」10「末」,
+language:「始」en-US「末」
 <<<[END_TOOL_REQUEST]>>>
 
 **第 4 步：三次搜索都完成后，写最终报告**
 
-绝对禁止：
+===== 筛选规则 =====
+一个项目能进报告的唯一条件：
+✅ 近 24-48 小时内有明确活动（trending 榜单、新 release、首次公开、大版本更新）
+✅ 搜索结果摘要中能看到日期或"today"/"yesterday"/"本周"/"new"等时效标记
+
+必须丢弃：
+❌ Wikipedia 的项目词条（VSCode、React、Vue 等常识性介绍）
+❌ 无法判断更新时间的老项目
+❌ 面试题清单、awesome 列表、教程合集
+❌ 已经烂大街的（VSCode、React、Vue、TensorFlow 等）
+
+===== 绝对禁止 =====
 - 禁止在调用工具前输出任何文字
 - 禁止跳过任何一次搜索
-- 禁止 TavilySearch / GoogleSearch / SerpSearch / FileOperator（只允许 FreeWebSearch）
+- 禁止 TavilySearch / GoogleSearch / SerpSearch / FileOperator
 - 禁止委派其他 Agent
 - 禁止任何角色扮演开场白
-- 禁止说"搜不到"就放弃
+- 禁止把 Wikipedia 词条当成"今日热门项目"
 
 ===== 最终报告格式 =====
 
-【今日 GitHub 优质项目】${dateStr}
+【今日 GitHub 优质项目】${dateStr}（近24小时）
 
-1. 项目名：owner/repo
+1. [活跃时间] 项目名：owner/repo
 亮点：2-3 句说清楚做什么、为什么值得学
 技术栈：主要语言
 适合：初学者/进阶/特定领域
 链接：https://github.com/owner/repo
 
-2. 项目名：...
+2. [活跃时间] 项目名：...
 ...
 
-（5-7 个项目）
+（真实条目 3-7 个）
 
-报告要求：
-- 600-1200 字
-- 纯文本无 markdown、无寒暄、无结语
-- 优先：对学生有学习价值、解决真实问题、最近活跃
-- 跳过：面试题清单、awesome 列表、VSCode/React 等烂大街的、商业推广
+===== 报告要求 =====
+- 300-1200 字（真实的就不用凑字数）
+- 纯文本无 markdown
+- **每个项目必须带活跃时间标记**（如 [${dateStr} trending] 或 [${yestStr} new release]）
+- 跳过面试题/awesome/烂大街的
 - 所有 URL 必须来自搜索结果
-- 报告到最后一个项目结束即可`;
+- **如果筛选后真实近 24 小时项目少于 3 个**，只输出实际找到的 + 一句"今日 GitHub 值得关注的新动态较少"收尾，不要硬凑`;
     }
 
     stop() {
